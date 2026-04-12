@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { runOCR, parseOCRText, cleanupWorker, compressImage } from '../services/ocr';
+import { runClaudeOCR, cleanupWorker } from '../services/ocr';
 import { storage } from '../services/storage';
 import { PRODUCTS } from '../data/products';
 import { useStock } from '../context/StockContext';
@@ -39,23 +39,17 @@ export default function Upload({ onNavigate }) {
   async function startOCR() {
     if (!imageFile) return;
     setStep(1);
-    setOcrStatus('Se comprimă imaginea...');
-    const compressed = await compressImage(imageFile).catch(() => imageFile);
-    setOcrStatus('Se inițializează Tesseract OCR...');
+    setOcrStatus('Se pregătește imaginea...');
 
-    const result = await runOCR(compressed, setOcrStatus);
+    const result = await runClaudeOCR(imageFile, setOcrStatus);
     if (!result.success) {
-      setOcrStatus('❌ Eroare OCR: ' + result.error);
+      setOcrStatus('❌ Eroare: ' + result.error);
       return;
     }
 
-    setRawText(result.text);
-    setOcrStatus('✓ Text extras cu succes!');
-
-    const items = parseOCRText(result.text, docType);
     // Al doilea pass: potrivire cu produse custom salvate
     const customProds = storage.getCustomProducts();
-    const remapped = items.map(item => {
+    const remapped = result.items.map(item => {
       if (item.productId) return item;
       const match = customProds.find(cp =>
         item.rawLine.toLowerCase().includes(cp.name.toLowerCase())

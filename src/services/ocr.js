@@ -1,7 +1,6 @@
-// OCR Service - uses Tesseract.js (browser-based, free)
-// Extensible: swap runOCR() implementation for Google Vision / Claude Vision later
+import { findProduct } from '../data/products.js';
 
-const MAX_OCR_WIDTH = 1500; // px — suficient pentru Tesseract, reduce dimensiunea fișierului
+const MAX_OCR_WIDTH = 1500;
 
 /**
  * Comprimă o imagine la maxim MAX_OCR_WIDTH lățime folosind Canvas API.
@@ -31,57 +30,92 @@ export function compressImage(file) {
   });
 }
 
-let tesseractWorker = null;
+// No-op — kept for backward compatibility with Upload.jsx useEffect cleanup
+export function cleanupWorker() {}
 
-async function getWorker() {
-  if (tesseractWorker) return tesseractWorker;
-  
-  const { createWorker } = await import('tesseract.js');
-  const worker = await createWorker('ron+eng', 1, {
-    logger: () => {}, // suppress logs
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
   });
-  tesseractWorker = worker;
-  return worker;
 }
 
-export async function cleanupWorker() {
-  if (tesseractWorker) {
-    await tesseractWorker.terminate();
-    tesseractWorker = null;
+async function callOcrApi(imageFile, type, onProgress) {
+  onProgress?.('Se comprimă imaginea...');
+  const compressed = await compressImage(imageFile).catch(() => imageFile);
+  onProgress?.('Se trimite la Claude Vision...');
+  const imageBase64 = await blobToBase64(compressed);
+  const res = await fetch('/api/ocr', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ imageBase64, mediaType: 'image/jpeg', type }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `HTTP ${res.status}`);
   }
+  return res.json();
 }
-export async function runOCR(imageFile, onProgress) {
+
+export async function runClaudeOCR(imageFile, onProgress) {
   try {
-    onProgress?.('Se inițializează OCR...');
-    const worker = await getWorker();
-    
-    onProgress?.('Se procesează imaginea...');
-    const { data } = await worker.recognize(imageFile);
-    
-    onProgress?.('Text extras cu succes!');
-    return { success: true, text: data.text, confidence: data.confidence };
+    const { items } = await callOcrApi(imageFile, 'invoice', onProgress);
+    onProgress?.('✓ Produse extrase!');
+    const results = [];
+    for (const item of (items || [])) {
+      const product = findProduct(item.nume);
+      if (product) {
+        const existing = results.find(r => r.productId === product.id);
+        if (existing) {
+          existing.cantitate += item.cantitate || 1;
+        } else {
+          results.push({
+            productId: product.id,
+            productName: product.name,
+            cantitate: item.cantitate || 1,
+            pretAchizitie: product.pretAchizitie,
+            pretVanzare: product.pretVanzare,
+            rawLine: item.nume,
+            confidence: 'auto',
+          });
+        }
+      } else {
+        results.push({
+          productId: null,
+          productName: null,
+          cantitate: item.cantitate || 1,
+          rawLine: item.nume,
+          confidence: 'manual',
+          needsReview: true,
+        });
+      }
+    }
+    return { success: true, items: results };
   } catch (error) {
-    console.error('OCR error:', error);
-    return { success: false, text: '', error: error.message };
+    return { success: false, items: [], error: error.message };
   }
 }
 
-export async function runOCRFromUrl(url, onProgress) {
+export async function runClaudeZReport(imageFile, onProgress) {
   try {
-    onProgress?.('Se inițializează OCR...');
-    const worker = await getWorker();
-    onProgress?.('Se procesează imaginea...');
-    const { data } = await worker.recognize(url);
-    return { success: true, text: data.text, confidence: data.confidence };
+    const { total } = await callOcrApi(imageFile, 'zreport', onProgress);
+    return { success: true, total: total ?? null };
   } catch (error) {
-    return { success: false, text: '', error: error.message };
+    return { success: false, total: null, error: error.message };
   }
 }
 
-// Parser: extract product lines from OCR text
-import { findProduct } from '../data/products.js';
 
-export function parseOCRText(rawText, documentType = 'factura') {
+
+
+// parseOCRText removed — Claude Vision returns structured JSON directly
+// Legacy stub kept so any stray import does not break at runtime
+export function parseOCRText() { return []; }
+
+// --- Z-report text parser (kept for fallback) ---
+function _unused_parseOCRText_placeholder() {
   const lines = rawText.split('\n').filter(l => l.trim().length > 3);
   const results = [];
 
@@ -149,7 +183,6 @@ export function parseOCRText(rawText, documentType = 'factura') {
     }
   }
 
-  return results.filter(r => r.rawLine.length > 3);
 }
 
 // Parser: extract total amount from a Z-report (fiscal end-of-day receipt)

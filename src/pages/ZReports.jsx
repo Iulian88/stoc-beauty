@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo } from 'react';
 import { storage } from '../services/storage';
-import { runOCR, parseZReportOCR, compressImage } from '../services/ocr';
+import { runClaudeZReport } from '../services/ocr';
 import { useStock } from '../context/StockContext';
 import { MAX_FILE_SIZE_BYTES, ZREPORT_TOLERANCE_RON } from '../constants';
 
@@ -56,19 +56,15 @@ export default function ZReports() {
   async function runZOCR() {
     if (!imageFile) return;
     setOcrRunning(true);
-    setOcrStatus('Se comprimă imaginea...');
-    const compressed = await compressImage(imageFile).catch(() => imageFile);
-    setOcrStatus('Se procesează imaginea...');
-    const result = await runOCR(compressed, setOcrStatus);
+    const result = await runClaudeZReport(imageFile, setOcrStatus);
     setOcrRunning(false);
     if (!result.success) {
-      setOcrStatus('❌ Eroare OCR: ' + result.error);
+      setOcrStatus('❌ Eroare: ' + result.error);
       return;
     }
-    const total = parseZReportOCR(result.text);
-    if (total !== null) {
-      setTotalRON(total.toFixed(2));
-      setOcrStatus(`✓ Total detectat: ${total.toFixed(2)} RON`);
+    if (result.total !== null) {
+      setTotalRON(result.total.toFixed(2));
+      setOcrStatus(`✓ Total detectat: ${result.total.toFixed(2)} RON`);
     } else {
       setOcrStatus('⚠ Nu s-a putut detecta totalul automat. Introdu manual.');
     }
