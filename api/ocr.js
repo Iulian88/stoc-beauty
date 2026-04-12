@@ -56,92 +56,126 @@ Return STRICT JSON: { "total": number }
 If not found, return: { "total": null }`;
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
-  }
+  console.log('START OCR');
+  console.log('Method:', req.method);
+  console.log('Has API key:', !!process.env.CLAUDE_API_KEY);
 
-  const { imageBase64, mediaType = 'image/jpeg', type = 'invoice' } = req.body ?? {};
-
-  if (!imageBase64 || typeof imageBase64 !== 'string') {
-    return res.status(400).json({ error: 'imageBase64 is required' });
-  }
-
-  const apiKey = process.env.CLAUDE_API_KEY;
-  if (!apiKey) {
-    return res.status(500).json({ error: 'Claude API key not configured' });
-  }
-
-  const prompt = type === 'zreport' ? ZREPORT_PROMPT : INVOICE_PROMPT;
-
-  let claudeRes;
   try {
-    claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'claude-3-haiku-20240307',
-        max_tokens: 2048,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'image',
-                source: { type: 'base64', media_type: mediaType, data: imageBase64 },
-              },
-              { type: 'text', text: prompt },
-            ],
-          },
-        ],
-      }),
-    });
-  } catch (err) {
-    return res.status(502).json({ error: 'Network error calling Claude', detail: err.message });
-  }
-
-  if (!claudeRes.ok) {
-    const errText = await claudeRes.text().catch(() => '');
-    return res.status(502).json({ error: 'Claude API error', status: claudeRes.status, detail: errText });
-  }
-
-  const data = await claudeRes.json();
-  const text = data.content?.[0]?.text ?? '';
-
-  if (type === 'zreport') {
-    const jsonMatch = text.match(/\{[\s\S]*?\}/);
-    if (!jsonMatch) return res.status(200).json({ total: null });
-    try {
-      const parsed = JSON.parse(jsonMatch[0]);
-      return res.status(200).json({ total: typeof parsed.total === 'number' ? parsed.total : null });
-    } catch {
-      return res.status(200).json({ total: null });
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method Not Allowed' });
     }
-  }
 
-  // Try to parse full invoice JSON first
-  const objMatch = text.match(/\{[\s\S]*\}/);
-  if (objMatch) {
+    const { imageBase64, mediaType = 'image/jpeg', type = 'invoice' } = req.body ?? {};
+
+    console.log('Type:', type);
+    console.log('Image base64 length:', imageBase64?.length ?? 0);
+    console.log('Media type:', mediaType);
+
+    if (!imageBase64 || typeof imageBase64 !== 'string') {
+      return res.status(400).json({ error: 'imageBase64 is required' });
+    }
+
+    const apiKey = process.env.CLAUDE_API_KEY;
+    if (!apiKey) {
+      console.error('CLAUDE_API_KEY is not set');
+      return res.status(500).json({ error: 'Claude API key not configured' });
+    }
+
+    const model = 'claude-3-5-sonnet-20241022';
+    const prompt = type === 'zreport' ? ZREPORT_PROMPT : INVOICE_PROMPT;
+    console.log('Model:', model);
+
+    let claudeRes;
     try {
-      const parsed = JSON.parse(objMatch[0]);
-      if (parsed.produse !== undefined) {
+      claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 2048,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'image',
+                  source: { type: 'base64', media_type: mediaType, data: imageBase64 },
+                },
+                { type: 'text', text: prompt },
+              ],
+            },
+          ],
+        }),
+      });
+    } catch (err) {
+      console.error('Network error calling Claude:', err.message);
+      return res.status(502).json({ error: 'Network error calling Claude', detail: err.message });
+    }
+
+    console.log('Claude response status:', claudeRes.status);
+
+    if (!claudeRes.ok) {
+      const errText = await claudeRes.text().catch(() => '');
+      console.error('Claude API error:', claudeRes.status, errText);
+      return res.status(502).json({ error: 'Claude API error', status: claudeRes.status, detail: errText });
+    }
+
+    const data = await claudeRes.json();
+    const text = data.content?.[0]?.text ?? '';
+    console.log('Claude raw response:', text.slice(0, 500));
+
+    if (type === 'zreport') {
+      const jsonMatch = text.match(/\{[\s\S]*?\}/);
+      if (!jsonMatch) return res.status(200).json({ total: null });
+      let parsed;
+      try {
+        parsed = JSON.parse(jsonMatch[0]);
+      } catch {
+        console.error('Invalid JSON from Claude (zreport):', jsonMatch[0]);
+        return res.status(200).json({ total: null, raw: text });
+      }
+      return res.status(200).json({ total: typeof parsed.total === 'number' ? parsed.total : null });
+    }
+
+    // Try full invoice object first
+    const objMatch = text.match(/\{[\s\S]*\}/);
+    if (objMatch) {
+      let parsed;
+      try {
+        parsed = JSON.parse(objMatch[0]);
+      } catch {
+        console.error('Invalid JSON from Claude (invoice object):', objMatch[0].slice(0, 300));
+        parsed = null;
+      }
+      if (parsed?.produse !== undefined) {
         return res.status(200).json({
           factura: parsed.factura ?? null,
           items: Array.isArray(parsed.produse) ? parsed.produse : [],
         });
       }
-    } catch { /* fall through to array parse */ }
-  }
-  // Fallback: plain array (legacy)
-  const arrMatch = text.match(/\[[\s\S]*\]/);
-  if (!arrMatch) return res.status(200).json({ factura: null, items: [] });
-  try {
-    const items = JSON.parse(arrMatch[0]);
+    }
+
+    // Fallback: plain array
+    const arrMatch = text.match(/\[[\s\S]*\]/);
+    if (!arrMatch) {
+      console.error('No JSON found in Claude response:', text.slice(0, 300));
+      return res.status(200).json({ factura: null, items: [], raw: text });
+    }
+    let items;
+    try {
+      items = JSON.parse(arrMatch[0]);
+    } catch {
+      console.error('Invalid JSON array from Claude:', arrMatch[0].slice(0, 300));
+      return res.status(200).json({ factura: null, items: [], raw: text });
+    }
     return res.status(200).json({ factura: null, items: Array.isArray(items) ? items : [] });
-  } catch {
-    return res.status(200).json({ factura: null, items: [] });
+
+  } catch (err) {
+    console.error('OCR ERROR:', err.message, err.stack);
+    return res.status(500).json({ error: err.message, stack: err.stack });
   }
 }
