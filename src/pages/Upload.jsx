@@ -26,6 +26,7 @@ export default function Upload({ onNavigate }) {
   const [dragOver, setDragOver] = useState(false);
   const [customProducts, setCustomProducts] = useState(() => storage.getCustomProducts());
   const fileRef = useRef();
+  const cameraRef = useRef();
 
   function handleFile(file) {
     if (!file) return;
@@ -265,7 +266,6 @@ export default function Upload({ onNavigate }) {
             <label className="label">{isPLU ? 'Imagine raport PLU' : 'Imagine factură'}</label>
             <div
               className={`upload-zone ${dragOver ? 'drag-over' : ''}`}
-              onClick={() => fileRef.current?.click()}
               onDragOver={e => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
               onDrop={e => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]); }}
@@ -275,18 +275,50 @@ export default function Upload({ onNavigate }) {
               ) : (
                 <>
                   <div className="upload-icon">📷</div>
-                  <div className="upload-text">Apasă pentru a selecta sau fotografiați</div>
-                  <div className="upload-hint">Acceptă imagini JPG, PNG, WEBP</div>
+                  <div className="upload-text">Foloseşte butoanele de mai jos</div>
+                  <div className="upload-hint">Sau trage imaginea direct aici</div>
                 </>
               )}
             </div>
+
+            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ flex: 1 }}
+                onClick={() => cameraRef.current?.click()}
+              >
+                📷 Fă poză
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ flex: 1 }}
+                onClick={() => fileRef.current?.click()}
+              >
+                🖼 Alege din galerie
+              </button>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 6, textAlign: 'center' }}>
+              Poți face o poză sau selecta una din galerie
+            </div>
+
+            {/* Camera input — forces camera on mobile */}
             <input
-              ref={fileRef}
+              ref={cameraRef}
               type="file"
               accept="image/*"
               capture="environment"
               style={{ display: 'none' }}
-              onChange={e => handleFile(e.target.files[0])}
+              onChange={e => { handleFile(e.target.files[0]); e.target.value = ''; }}
+            />
+            {/* Gallery input — no capture, shows gallery/file picker */}
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={e => { handleFile(e.target.files[0]); e.target.value = ''; }}
             />
           </div>
 
