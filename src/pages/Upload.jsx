@@ -352,7 +352,7 @@ export default function Upload({ onNavigate }) {
           <div className="spinner" />
           <div>{ocrStatus}</div>
           <div style={{ fontSize: 12, color: 'var(--text3)', maxWidth: 260, textAlign: 'center' }}>
-            Prima rulare poate dura 10–20 secunde — Tesseract se descarcă local
+            Claude analizează imaginea — poate dura câteva secunde
           </div>
         </div>
       )}
