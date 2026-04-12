@@ -1,14 +1,54 @@
-const INVOICE_PROMPT = `Extract ONLY the product table from this invoice.
-Return STRICT JSON:
-[
-  { "nume": string, "cantitate": number, "pret": number }
-]
+const INVOICE_PROMPT = `You are an accounting assistant. Analyze this invoice image and return STRICT JSON with no markdown, no explanation:
 
-Rules:
-- Ignore addresses, emails, phone numbers
-- Ignore company info
-- Ignore headers/footers
-- Only extract rows from the product table`;
+{
+  "factura": {
+    "numar": string | null,
+    "data": string | null,
+    "furnizor": string | null,
+    "client": string | null,
+    "pagina_curenta": number | null,
+    "total_pagini": number | null,
+    "total_fara_tva": number | null,
+    "total_tva": number | null,
+    "total_general": number | null
+  },
+  "produse": [
+    { "nume": string, "cantitate": number, "pret": number }
+  ]
+}
+
+CRITICAL RULES — follow exactly:
+
+PRODUCT TABLE:
+- Extract ONLY rows from the product/services table
+- For unit price: use ONLY the column "Pret dupa rabat" or "Pret unitar dupa reducere"
+- If that column is absent, use the net unit price after any discount
+- NEVER use "Pret lista" or gross price before discount
+- cantitate must be the ordered/delivered quantity (numeric)
+- pret must be the final net unit price in RON (numeric, no currency symbol)
+
+METADATA:
+- numar: invoice number/series (e.g. "MBAR 123456")
+- data: invoice date in ISO format YYYY-MM-DD if possible, else as printed
+- furnizor: supplier company name only (no address)
+- client: client company name only (no address)
+- pagina_curenta / total_pagini: extract from "Pagina X din Y" or similar; null if not present
+- total_fara_tva: the subtotal before VAT (RON)
+- total_tva: the VAT amount (RON)
+- total_general: the grand total payable (RON)
+
+IGNORE:
+- Street addresses, postal codes, cities
+- Email addresses, phone numbers, fax
+- CUI / CIF / registration numbers
+- Bank accounts (IBAN)
+- Page headers and footers unrelated to amounts
+- Any text that is not product rows or the fields listed above
+
+VALIDATION:
+- If total_fara_tva + total_tva ≈ total_general, include all three
+- If a value is not visible or unreadable, use null — do NOT guess
+- Return an empty array for produse if no product table is found`;
 
 const ZREPORT_PROMPT = `This is a Z-report (fiscal end-of-day receipt).
 Extract ONLY the grand total sales amount in RON.
@@ -44,7 +84,7 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: 'claude-3-haiku-20240307',
-        max_tokens: 1024,
+        max_tokens: 2048,
         messages: [
           {
             role: 'user',
@@ -82,12 +122,26 @@ export default async function handler(req, res) {
     }
   }
 
-  const jsonMatch = text.match(/\[[\s\S]*\]/);
-  if (!jsonMatch) return res.status(200).json({ items: [] });
+  // Try to parse full invoice JSON first
+  const objMatch = text.match(/\{[\s\S]*\}/);
+  if (objMatch) {
+    try {
+      const parsed = JSON.parse(objMatch[0]);
+      if (parsed.produse !== undefined) {
+        return res.status(200).json({
+          factura: parsed.factura ?? null,
+          items: Array.isArray(parsed.produse) ? parsed.produse : [],
+        });
+      }
+    } catch { /* fall through to array parse */ }
+  }
+  // Fallback: plain array (legacy)
+  const arrMatch = text.match(/\[[\s\S]*\]/);
+  if (!arrMatch) return res.status(200).json({ factura: null, items: [] });
   try {
-    const items = JSON.parse(jsonMatch[0]);
-    return res.status(200).json({ items: Array.isArray(items) ? items : [] });
+    const items = JSON.parse(arrMatch[0]);
+    return res.status(200).json({ factura: null, items: Array.isArray(items) ? items : [] });
   } catch {
-    return res.status(200).json({ items: [] });
+    return res.status(200).json({ factura: null, items: [] });
   }
 }

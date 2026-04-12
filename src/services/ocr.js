@@ -61,8 +61,9 @@ async function callOcrApi(imageFile, type, onProgress) {
 
 export async function runClaudeOCR(imageFile, onProgress) {
   try {
-    const { items } = await callOcrApi(imageFile, 'invoice', onProgress);
-    onProgress?.('✓ Produse extrase!');
+    const { items, factura } = await callOcrApi(imageFile, 'invoice', onProgress);
+    const count = (items || []).length;
+    onProgress?.(`✓ ${count} produs${count !== 1 ? 'e' : ''} extras${count !== 1 ? 'e' : ''}!`);
     const results = [];
     for (const item of (items || [])) {
       const product = findProduct(item.nume);
@@ -92,9 +93,9 @@ export async function runClaudeOCR(imageFile, onProgress) {
         });
       }
     }
-    return { success: true, items: results };
+    return { success: true, items: results, factura: factura ?? null };
   } catch (error) {
-    return { success: false, items: [], error: error.message };
+    return { success: false, items: [], factura: null, error: error.message };
   }
 }
 

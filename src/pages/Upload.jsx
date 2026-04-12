@@ -17,6 +17,7 @@ export default function Upload({ onNavigate }) {
   // Cleanup Tesseract worker when leaving the Upload page
   useEffect(() => () => { cleanupWorker(); }, []);
   const [sursa, setSursa] = useState('');
+  const [facturaData, setFacturaData] = useState(null);
   const [imageFile, setImageFile] = useState(null);
   const [imageUrl, setImageUrl] = useState(null);
   const [ocrStatus, setOcrStatus] = useState('');
@@ -45,6 +46,17 @@ export default function Upload({ onNavigate }) {
     if (!result.success) {
       setOcrStatus('❌ Eroare: ' + result.error);
       return;
+    }
+
+    // Auto-fill sursa from invoice metadata if field is empty
+    if (result.factura) {
+      setFacturaData(result.factura);
+      if (!sursa) {
+        const nr = result.factura.numar;
+        const dt = result.factura.data;
+        if (nr) setSursa(nr + (dt ? ` / ${dt}` : ''));
+        else if (dt) setSursa(dt);
+      }
     }
 
     // Al doilea pass: potrivire cu produse custom salvate
@@ -149,6 +161,7 @@ export default function Upload({ onNavigate }) {
     storage.saveTransaction({
       tip: docType,
       sursa: sursa || (docType === 'intrare' ? 'Factură' : 'Raport PLU'),
+      factura: facturaData ?? undefined,
       items: validItems.map(item => ({
         productId: item.productId,
         productName: item.productName,
@@ -166,6 +179,7 @@ export default function Upload({ onNavigate }) {
     setStep(0);
     setDocType('intrare');
     setSursa('');
+    setFacturaData(null);
     setImageFile(null);
     setImageUrl(null);
     setOcrStatus('');
