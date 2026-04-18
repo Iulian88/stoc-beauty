@@ -56,7 +56,12 @@ async function callOcrApi(imageFile, type, onProgress) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || `HTTP ${res.status}`);
   }
-  return res.json();
+  const data = await res.json();
+  if (data.success === false) {
+    const detail = data.detail ? ` (${data.claudeStatus}: ${data.detail.slice(0, 120)})` : '';
+    throw new Error((data.error || 'Claude error') + detail);
+  }
+  return data;
 }
 
 export async function runClaudeOCR(imageFile, onProgress) {

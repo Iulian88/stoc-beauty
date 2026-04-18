@@ -193,9 +193,12 @@ export default async function handler(req, res) {
       let errBody = '';
       try { errBody = await claudeRes.text(); } catch {}
       console.error('Claude API error - status:', claudeRes.status, '- body:', errBody);
-      return res.status(claudeRes.status).json({
+      // Always return 200 so the browser/service-worker never caches a 4xx for this route.
+      // The error details are in the JSON body.
+      return res.status(200).json({
+        success: false,
         error: 'Claude API error',
-        status: claudeRes.status,
+        claudeStatus: claudeRes.status,
         detail: errBody,
       });
     }
