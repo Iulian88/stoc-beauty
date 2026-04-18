@@ -103,9 +103,16 @@ export default async function handler(req, res) {
               content: [
                 {
                   type: 'image',
-                  source: { type: 'base64', media_type: mediaType, data: imageBase64 },
+                  source: {
+                    type: 'base64',
+                    media_type: 'image/jpeg',
+                    data: imageBase64,
+                  },
                 },
-                { type: 'text', text: prompt },
+                {
+                  type: 'text',
+                  text: prompt,
+                },
               ],
             },
           ],
