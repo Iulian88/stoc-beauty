@@ -81,7 +81,7 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'Claude API key not configured' });
     }
 
-    const model = 'claude-3-5-sonnet-20241022';
+    const model = 'claude-3-5-sonnet';
     const prompt = type === 'zreport' ? ZREPORT_PROMPT : INVOICE_PROMPT;
     console.log('Model:', model);
 
