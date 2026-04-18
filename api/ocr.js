@@ -81,9 +81,10 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'Claude API key not configured' });
     }
 
-    const model = 'claude-3-5-sonnet';
+    const model = 'claude-3-5-sonnet-20241022';
     const prompt = type === 'zreport' ? ZREPORT_PROMPT : INVOICE_PROMPT;
     console.log('Model:', model);
+    console.log('Request base64 size (bytes):', Buffer.byteLength(imageBase64, 'utf8'));
 
     let claudeRes;
     try {
@@ -126,9 +127,15 @@ export default async function handler(req, res) {
     console.log('Claude response status:', claudeRes.status);
 
     if (!claudeRes.ok) {
-      const errText = await claudeRes.text().catch(() => '');
-      console.error('Claude API error:', claudeRes.status, errText);
-      return res.status(502).json({ error: 'Claude API error', status: claudeRes.status, detail: errText });
+      let errBody = '';
+      try { errBody = await claudeRes.text(); } catch {}
+      console.error('Claude API error — status:', claudeRes.status, '— body:', errBody);
+      // Return real Claude error to frontend for full transparency
+      return res.status(claudeRes.status).json({
+        error: 'Claude API error',
+        status: claudeRes.status,
+        detail: errBody,
+      });
     }
 
     const data = await claudeRes.json();
