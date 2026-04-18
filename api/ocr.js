@@ -1,116 +1,38 @@
-const INVOICE_PROMPT = `
-You are a strict financial OCR extraction engine specialized in invoices.
+const INVOICE_PROMPT = `You are an OCR extraction engine for invoices.
 
-Your job is to extract ONLY factual, visible data from the provided invoice image.
+Extract EXACTLY what you see. DO NOT normalize, DO NOT rename products.
 
-=====================================
-CRITICAL BEHAVIOR RULES (NON-NEGOTIABLE)
-=====================================
-
-- DO NOT guess, infer, or invent any data
-- ONLY extract data that is clearly visible in the image
-- If a field is missing or unclear → return null
-- If no products/services are clearly listed → return an empty array []
-- DO NOT hallucinate line items
-- DO NOT interpret totals as products
-- DO NOT return explanations, comments, or markdown
-
-=====================================
-OUTPUT FORMAT (STRICT JSON ONLY)
-=====================================
-
-Return EXACTLY this JSON structure:
+Return ONLY this JSON (no markdown, no explanations):
 
 {
-  "supplier": string | null,
-  "invoice_number": string | null,
-  "date": string | null,
-  "currency": string | null,
-  "total": number | null,
-  "vat": number | null,
-  "items": [
+  "invoice": {
+    "number": "",
+    "date": "",
+    "supplier": "",
+    "currency": "",
+    "total": null,
+    "vat": null
+  },
+  "lines": [
     {
-      "name": string,
-      "quantity": number | null,
-      "unit_price": number | null,
-      "total_price": number | null
+      "raw": "",
+      "name": "",
+      "quantity": null,
+      "unit_price": null,
+      "total": null,
+      "unit": ""
     }
   ]
 }
 
-=====================================
-FIELD EXTRACTION RULES
-=====================================
-
-SUPPLIER:
-- Extract company issuing the invoice
-- Usually at top or header section
-
-INVOICE NUMBER:
-- Look for: "Invoice number", "No.", "Nr.", "Invoice #"
-
-DATE:
-- Extract issue date (NOT due date unless only one exists)
-- Format as YYYY-MM-DD if possible
-
-CURRENCY:
-- Detect from symbols or text (USD, EUR, RON, etc.)
-
-TOTAL:
-- Extract FINAL payable amount (not subtotal)
-- Look for: "Total", "Amount due", "Grand total"
-
-VAT:
-- Extract VAT value if present
-- Ignore percentage unless value is also present
-
-=====================================
-LINE ITEMS (MOST IMPORTANT)
-=====================================
-
-- Extract ONLY real products/services from table rows
-- Each item must be a real purchasable unit
-- Ignore:
-  - Subtotal
-  - VAT lines
-  - Shipping (unless clearly a billed item)
-  - Payment summaries
-
-Each item:
-- name => REQUIRED (must exist)
-- quantity => if visible
-- unit_price => if visible
-- total_price => if visible
-
-If table exists => parse row by row
-
-If NO clear items exist:
-=> return "items": []
-
-=====================================
-NUMBER RULES
-=====================================
-
-- Convert all numbers to numeric format (no symbols)
-- Example:
-  "$12.50" => 12.5
-  "1,200.00" => 1200
-
-=====================================
-VALIDATION BEFORE OUTPUT
-=====================================
-
-- items MUST be an array
-- NEVER return text outside JSON
-- NEVER include explanations
-- NEVER fabricate data
-- JSON must be valid and parsable
-
-=====================================
-FINAL OUTPUT RULE
-=====================================
-
-Return ONLY JSON. Nothing else.
+Rules:
+- Keep product names EXACTLY as printed on the invoice
+- If unsure about any field → null
+- DO NOT invent values
+- DO NOT merge lines
+- lines must contain only real product/service rows (no subtotals, VAT rows, or summaries)
+- Convert numbers to numeric type, strip symbols: "1.200,00" => 1200
+- Return ONLY JSON. Nothing else.
 `;
 
 const ZREPORT_PROMPT = `This is a Z-report (fiscal end-of-day receipt).
@@ -236,28 +158,34 @@ export default async function handler(req, res) {
       return res.status(200).json({ factura: null, items: [], raw: text });
     }
 
-    // Map new Claude schema to existing frontend schema
+    // Support both new schema { invoice: {}, lines: [] } and legacy flat schema
+    const inv = parsed.invoice ?? parsed;
+    const totalVal = typeof inv.total === 'number' ? inv.total : null;
+    const vatVal = typeof inv.vat === 'number' ? inv.vat : null;
+
+    // Map Claude schema to frontend schema
     const factura = {
-      numar: parsed.invoice_number ?? null,
-      data: parsed.date ?? null,
-      furnizor: parsed.supplier ?? null,
+      numar: inv.number ?? inv.invoice_number ?? null,
+      data: inv.date ?? null,
+      furnizor: inv.supplier ?? null,
       client: null,
-      total_fara_tva: typeof parsed.total === 'number' && typeof parsed.vat === 'number'
-        ? Math.round((parsed.total - parsed.vat) * 100) / 100
+      total_fara_tva: totalVal !== null && vatVal !== null
+        ? Math.round((totalVal - vatVal) * 100) / 100
         : null,
-      total_tva: typeof parsed.vat === 'number' ? parsed.vat : null,
-      total_general: typeof parsed.total === 'number' ? parsed.total : null,
-      currency: parsed.currency ?? null,
+      total_tva: vatVal,
+      total_general: totalVal,
+      currency: inv.currency ?? null,
     };
 
-    const rawItems = Array.isArray(parsed.items) ? parsed.items : [];
+    const rawItems = Array.isArray(parsed.lines) ? parsed.lines
+      : Array.isArray(parsed.items) ? parsed.items : [];
     const items = rawItems
       .filter(item => item && typeof item.name === 'string' && item.name.trim())
       .map(item => ({
         nume: item.name.trim(),
         cantitate: typeof item.quantity === 'number' ? item.quantity : 1,
         pret: typeof item.unit_price === 'number' ? item.unit_price : null,
-        total_pret: typeof item.total_price === 'number' ? item.total_price : null,
+        total_pret: typeof (item.total ?? item.total_price) === 'number' ? (item.total ?? item.total_price) : null,
       }));
 
     console.log('Parsed items count:', items.length);
