@@ -71,7 +71,15 @@ export async function runClaudeOCR(imageFile, onProgress) {
     onProgress?.(`✓ ${count} produs${count !== 1 ? 'e' : ''} extras${count !== 1 ? 'e' : ''}!`);
     const results = [];
     for (const item of (items || [])) {
-      console.log('[OCR PRICE]', item.nume, item.pret);
+      const _mismatch = item.price_mismatch || false;
+      console.log('[OCR LINE]', {
+        line: item.line_number ?? null,
+        name: item.nume,
+        qty: item.cantitate,
+        unit: item.pret,
+        total: item.total_pret,
+        mismatch: _mismatch,
+      });
       const match = matchProduct(item.nume);
       if (match) {
         const { product, needsReview: matchNeedsReview } = match;

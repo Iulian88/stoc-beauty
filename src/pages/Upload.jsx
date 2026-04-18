@@ -195,6 +195,24 @@ export default function Upload({ onNavigate }) {
   const allProducts = [...PRODUCTS, ...customProducts];
   const isPLU = docType === 'iesire';
 
+  // T2: sort by lineNumber ascending, nulls last
+  const sortedItems = [...parsedItems].sort((a, b) => {
+    if (a.lineNumber != null && b.lineNumber != null) return a.lineNumber - b.lineNumber;
+    if (a.lineNumber != null) return -1;
+    if (b.lineNumber != null) return 1;
+    return 0;
+  });
+
+  // T3: client-side mismatch flag (recompute in case backend skipped it)
+  function hasMismatch(item) {
+    if (item.pretAchizitieOcr != null && item.cantitate > 0 && item.totalOcr != null) {
+      const expected = Math.round(item.pretAchizitieOcr * item.cantitate * 100) / 100;
+      const tolerance = Math.max(0.05, expected * 0.01);
+      return Math.abs(expected - item.totalOcr) > tolerance;
+    }
+    return item.priceMismatch || false;
+  }
+
   return (
     <div>
       <p className="page-title">{isPLU ? 'Raport PLU — scădere stoc' : 'Adaugă factură — intrare stoc'}</p>
@@ -385,7 +403,7 @@ export default function Upload({ onNavigate }) {
             </div>
           )}
 
-          {parsedItems.map(item => {
+          {sortedItems.map(item => {
             const isNewProduct = item.needsReview && !item.productId;
             const canConfirm = (item._newName || '').trim().length > 0 && parseFloat(item._newPretAchizitie) > 0;
 
@@ -531,6 +549,12 @@ export default function Upload({ onNavigate }) {
 
             return (
               <div key={item._idx} className={`review-item ${item._confirmed ? 'confirmed' : ''}`}>
+                {/* T1: line number */}
+                {item.lineNumber != null && (
+                  <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>
+                    Linie factură: #{item.lineNumber}
+                  </div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
                   <div className="review-raw" style={{ margin: 0 }}>OCR: {item.rawLine}</div>
                   <span style={{
@@ -593,11 +617,27 @@ export default function Upload({ onNavigate }) {
                           {item.totalOcr != null && (
                             <span style={{ display: 'block' }}>
                               Total linie: <strong>{item.totalOcr} RON</strong>
-                              {item.priceMismatch && <span style={{ color: '#b91c1c', marginLeft: 6 }}>⚠ preț × cant ≠ total</span>}
+                              {/* T4: mismatch warning */}
+                              {hasMismatch(item) && (
+                                <span style={{ color: '#b91c1c', marginLeft: 6, fontSize: 11 }}>
+                                  ⚠ Linia {item.lineNumber != null ? `#${item.lineNumber}` : ''} nu bate la calcul
+                                </span>
+                              )}
                             </span>
                           )}
+                          {/* T5: price source label */}
+                          {item.sourceOcr === 'discount' && (
+                            <span style={{ display: 'block', color: '#16a34a', fontSize: 11 }}>✓ preț după rabat</span>
+                          )}
                           {item.sourceOcr === 'computed' && (
-                            <span style={{ display: 'block', color: '#f59e0b' }}>* preț calculat din total ÷ cantitate</span>
+                            <span style={{ display: 'block', color: '#f59e0b', fontSize: 11 }}>* preț calculat</span>
+                          )}
+                          {item.sourceOcr === 'unknown' && (
+                            <span style={{ display: 'block', color: '#9ca3af', fontSize: 11 }}>? preț incert</span>
+                          )}
+                          {/* T8: ambiguous match */}
+                          {item.needsReview && item.productId && (
+                            <span style={{ display: 'block', color: '#b45309', fontSize: 11, marginTop: 2 }}>⚠ verificare produs necesară (match ambiguu)</span>
                           )}
                           <span style={{ display: 'block' }}>Vânzare: {item.pretVanzare} RON</span>
                         </>
