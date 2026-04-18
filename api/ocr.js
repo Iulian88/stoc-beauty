@@ -13,11 +13,21 @@ function repairJSON(s) {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
-const INVOICE_PROMPT = `You are an OCR extraction engine for invoices.
+const INVOICE_PROMPT = `You are a strict JSON generator.
 
-Extract EXACTLY what you see. DO NOT normalize, DO NOT rename products.
+Return ONLY valid JSON.
 
-Return ONLY this JSON (no markdown, no explanations):
+DO NOT:
+* add explanations
+* add markdown
+* add \`\`\`json fences
+* add text before or after JSON
+
+Output must be directly parsable by JSON.parse()
+
+If you are unsure about a value → use null
+
+Extract invoice data from the image using this schema:
 
 {
   "invoice": {
@@ -42,12 +52,10 @@ Return ONLY this JSON (no markdown, no explanations):
 
 Rules:
 - Keep product names EXACTLY as printed on the invoice
-- If unsure about any field → null
+- lines must contain only real product/service rows (no subtotals, VAT rows, or summaries)
+- Convert numbers to numeric type, strip currency symbols: "1.200,00" => 1200
 - DO NOT invent values
 - DO NOT merge lines
-- lines must contain only real product/service rows (no subtotals, VAT rows, or summaries)
-- Convert numbers to numeric type, strip symbols: "1.200,00" => 1200
-- Return ONLY JSON. Nothing else.
 `;
 
 const ZREPORT_PROMPT = `This is a Z-report (fiscal end-of-day receipt).
