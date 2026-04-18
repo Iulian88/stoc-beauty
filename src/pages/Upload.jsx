@@ -577,20 +577,29 @@ export default function Upload({ onNavigate }) {
                 </div>
 
                 {item.productId && (
-                  <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text3)' }}>
+                  <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text3)', lineHeight: '1.7' }}>
                     {isPLU
                       ? <><span style={{ color: '#dc2626' }}>↓ se scade din stoc</span> · Preț vânzare: {item.pretVanzare} RON</>
                       : (
                         <>
                           {item.pretAchizitieOcr != null && item.pretAchiziitieCatalog != null && item.pretAchizitieOcr !== item.pretAchiziitieCatalog ? (
                             <span style={{ display: 'block' }}>
-                              <span style={{ color: '#16a34a', fontWeight: 600 }}>Preț OCR: {item.pretAchizitieOcr} RON</span>
+                              <span style={{ color: '#16a34a', fontWeight: 600 }}>Preț achiziție: {item.pretAchizitieOcr} RON / buc</span>
                               <span style={{ color: '#9ca3af', marginLeft: 8 }}>(catalog: {item.pretAchiziitieCatalog} RON)</span>
                             </span>
                           ) : (
-                            <span>Achiziție: {item.pretAchizitie} RON</span>
+                            <span style={{ display: 'block' }}>Preț achiziție: {item.pretAchizitie != null ? item.pretAchizitie : '—'} RON / buc</span>
                           )}
-                          <span style={{ marginLeft: 8 }}>· Vânzare: {item.pretVanzare} RON</span>
+                          {item.totalOcr != null && (
+                            <span style={{ display: 'block' }}>
+                              Total linie: <strong>{item.totalOcr} RON</strong>
+                              {item.priceMismatch && <span style={{ color: '#b91c1c', marginLeft: 6 }}>⚠ preț × cant ≠ total</span>}
+                            </span>
+                          )}
+                          {item.sourceOcr === 'computed' && (
+                            <span style={{ display: 'block', color: '#f59e0b' }}>* preț calculat din total ÷ cantitate</span>
+                          )}
+                          <span style={{ display: 'block' }}>Vânzare: {item.pretVanzare} RON</span>
                         </>
                       )}
                   </div>

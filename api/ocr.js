@@ -43,9 +43,11 @@ Extract invoice data from the image using this schema:
       "raw": "",
       "name": "",
       "quantity": null,
+      "unit": "",
+      "list_price": null,
+      "discount_pct": null,
       "unit_price": null,
-      "total": null,
-      "unit": ""
+      "total": null
     }
   ]
 }
@@ -56,6 +58,11 @@ Rules:
 - Convert numbers to numeric type, strip currency symbols: "1.200,00" => 1200
 - DO NOT invent values
 - DO NOT merge lines
+- unit_price = "Pret dupa rabat" (price AFTER discount) — NEVER use "Pret lista"
+- If invoice has columns "Pret lista" / "Rabat %" / "Pret dupa rabat": unit_price = the "Pret dupa rabat" column value
+- list_price = "Pret lista" or original price before any discount
+- discount_pct = discount percentage as a number (e.g. 10 for 10%)
+- total = the line total for that row (quantity × unit_price)
 `;
 
 const ZREPORT_PROMPT = `This is a Z-report (fiscal end-of-day receipt).
@@ -240,17 +247,64 @@ export default async function handler(req, res) {
       .map(item => {
         const nameStr = (item.name || '').trim() || (item.raw || '').trim();
         const qty = item.quantity != null ? Number(item.quantity) : 1;
-        const unitPrice = item.unit_price != null ? Number(item.unit_price) : null;
         const lineTotal = (item.total ?? item.total_price) != null ? Number(item.total ?? item.total_price) : null;
+        const listPrice = item.list_price != null ? Number(item.list_price) : null;
+        const discountPct = item.discount_pct != null ? Number(item.discount_pct) : null;
+
+        // Priority 1: unit_price from Claude (should be "Pret dupa rabat" per prompt)
+        let unitPrice = item.unit_price != null ? Number(item.unit_price) : null;
+        let source = 'direct';
+
+        // Detect wrong extraction: discount exists but unit_price ≈ list_price → Claude returned list price by mistake
+        if (unitPrice !== null && listPrice !== null && discountPct != null && discountPct > 0) {
+          if (Math.abs(unitPrice - listPrice) < 0.01) {
+            console.log('[OCR LINE] REJECT — unit_price ≈ list_price with discount, forcing fallback:', nameStr, { unitPrice, listPrice, discountPct });
+            unitPrice = null;
+          }
+        }
+
+        // Priority 2: compute from total / quantity
+        if (unitPrice === null && lineTotal !== null && qty > 0) {
+          unitPrice = Math.round((lineTotal / qty) * 100) / 100;
+          source = 'computed';
+        }
+
+        if (unitPrice !== null && source === 'direct') source = 'discount';
+        if (unitPrice === null) source = 'unknown';
+
+        // Validate: unit_price × quantity ≈ total (tolerance 1% or 0.05 RON)
+        let priceMismatch = false;
+        if (unitPrice !== null && lineTotal !== null) {
+          const expected = Math.round(unitPrice * qty * 100) / 100;
+          const tolerance = Math.max(0.05, expected * 0.01);
+          priceMismatch = Math.abs(expected - lineTotal) > tolerance;
+        }
+
+        console.log('[OCR LINE]', JSON.stringify({
+          name: nameStr,
+          qty,
+          list_price: listPrice,
+          discount_pct: discountPct,
+          unit_price_raw: item.unit_price,
+          unit_price_final: unitPrice,
+          total: lineTotal,
+          source,
+          price_mismatch: priceMismatch,
+        }));
+
         const confidence =
           (nameStr ? 0.5 : 0) +
           (item.quantity != null ? 0.2 : 0) +
-          (item.unit_price != null ? 0.3 : 0);
+          (unitPrice !== null ? 0.3 : 0);
         return {
           nume: nameStr,
           cantitate: qty,
           pret: unitPrice,
           total_pret: lineTotal,
+          list_price: listPrice,
+          discount_pct: discountPct,
+          source,
+          price_mismatch: priceMismatch,
           rawLine: (item.raw || '').trim(),
           confidence,
           needs_review: !item.name,
