@@ -144,7 +144,7 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'Claude API key not configured' });
     }
 
-    const model = 'claude-3-haiku-20240307';
+    const model = 'claude-haiku-4-5';
     const prompt = type === 'zreport' ? ZREPORT_PROMPT : INVOICE_PROMPT;
     console.log('Model:', model);
     console.log('Request base64 size (bytes):', Buffer.byteLength(imageBase64, 'utf8'));
