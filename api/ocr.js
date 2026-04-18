@@ -1,65 +1,117 @@
-// PROBE — remove after routing confirmed
-export default function handler(req, res) {
-  return res.status(200).json({
-    test: 'API WORKS',
-    method: req.method,
-    timestamp: Date.now(),
-  });
-}
+const INVOICE_PROMPT = `
+You are a strict financial OCR extraction engine specialized in invoices.
 
-/* REAL HANDLER BELOW — temporarily disabled
+Your job is to extract ONLY factual, visible data from the provided invoice image.
 
-const INVOICE_PROMPT = `You are an accounting assistant. Analyze this invoice image and return STRICT JSON with no markdown, no explanation:
+=====================================
+CRITICAL BEHAVIOR RULES (NON-NEGOTIABLE)
+=====================================
+
+- DO NOT guess, infer, or invent any data
+- ONLY extract data that is clearly visible in the image
+- If a field is missing or unclear → return null
+- If no products/services are clearly listed → return an empty array []
+- DO NOT hallucinate line items
+- DO NOT interpret totals as products
+- DO NOT return explanations, comments, or markdown
+
+=====================================
+OUTPUT FORMAT (STRICT JSON ONLY)
+=====================================
+
+Return EXACTLY this JSON structure:
 
 {
-  "factura": {
-    "numar": string | null,
-    "data": string | null,
-    "furnizor": string | null,
-    "client": string | null,
-    "pagina_curenta": number | null,
-    "total_pagini": number | null,
-    "total_fara_tva": number | null,
-    "total_tva": number | null,
-    "total_general": number | null
-  },
-  "produse": [
-    { "nume": string, "cantitate": number, "pret": number }
+  "supplier": string | null,
+  "invoice_number": string | null,
+  "date": string | null,
+  "currency": string | null,
+  "total": number | null,
+  "vat": number | null,
+  "items": [
+    {
+      "name": string,
+      "quantity": number | null,
+      "unit_price": number | null,
+      "total_price": number | null
+    }
   ]
 }
 
-CRITICAL RULES — follow exactly:
+=====================================
+FIELD EXTRACTION RULES
+=====================================
 
-PRODUCT TABLE:
-- Extract ONLY rows from the product/services table
-- For unit price: use ONLY the column "Pret dupa rabat" or "Pret unitar dupa reducere"
-- If that column is absent, use the net unit price after any discount
-- NEVER use "Pret lista" or gross price before discount
-- cantitate must be the ordered/delivered quantity (numeric)
-- pret must be the final net unit price in RON (numeric, no currency symbol)
+SUPPLIER:
+- Extract company issuing the invoice
+- Usually at top or header section
 
-METADATA:
-- numar: invoice number/series (e.g. "MBAR 123456")
-- data: invoice date in ISO format YYYY-MM-DD if possible, else as printed
-- furnizor: supplier company name only (no address)
-- client: client company name only (no address)
-- pagina_curenta / total_pagini: extract from "Pagina X din Y" or similar; null if not present
-- total_fara_tva: the subtotal before VAT (RON)
-- total_tva: the VAT amount (RON)
-- total_general: the grand total payable (RON)
+INVOICE NUMBER:
+- Look for: "Invoice number", "No.", "Nr.", "Invoice #"
 
-IGNORE:
-- Street addresses, postal codes, cities
-- Email addresses, phone numbers, fax
-- CUI / CIF / registration numbers
-- Bank accounts (IBAN)
-- Page headers and footers unrelated to amounts
-- Any text that is not product rows or the fields listed above
+DATE:
+- Extract issue date (NOT due date unless only one exists)
+- Format as YYYY-MM-DD if possible
 
-VALIDATION:
-- If total_fara_tva + total_tva ≈ total_general, include all three
-- If a value is not visible or unreadable, use null — do NOT guess
-- Return an empty array for produse if no product table is found`;
+CURRENCY:
+- Detect from symbols or text (USD, EUR, RON, etc.)
+
+TOTAL:
+- Extract FINAL payable amount (not subtotal)
+- Look for: "Total", "Amount due", "Grand total"
+
+VAT:
+- Extract VAT value if present
+- Ignore percentage unless value is also present
+
+=====================================
+LINE ITEMS (MOST IMPORTANT)
+=====================================
+
+- Extract ONLY real products/services from table rows
+- Each item must be a real purchasable unit
+- Ignore:
+  - Subtotal
+  - VAT lines
+  - Shipping (unless clearly a billed item)
+  - Payment summaries
+
+Each item:
+- name => REQUIRED (must exist)
+- quantity => if visible
+- unit_price => if visible
+- total_price => if visible
+
+If table exists => parse row by row
+
+If NO clear items exist:
+=> return "items": []
+
+=====================================
+NUMBER RULES
+=====================================
+
+- Convert all numbers to numeric format (no symbols)
+- Example:
+  "$12.50" => 12.5
+  "1,200.00" => 1200
+
+=====================================
+VALIDATION BEFORE OUTPUT
+=====================================
+
+- items MUST be an array
+- NEVER return text outside JSON
+- NEVER include explanations
+- NEVER fabricate data
+- JSON must be valid and parsable
+
+=====================================
+FINAL OUTPUT RULE
+=====================================
+
+Return ONLY JSON. Nothing else.
+`;
 
 const ZREPORT_PROMPT = `This is a Z-report (fiscal end-of-day receipt).
 Extract ONLY the grand total sales amount in RON.
@@ -140,8 +192,7 @@ export default async function handler(req, res) {
     if (!claudeRes.ok) {
       let errBody = '';
       try { errBody = await claudeRes.text(); } catch {}
-      console.error('Claude API error — status:', claudeRes.status, '— body:', errBody);
-      // Return real Claude error to frontend for full transparency
+      console.error('Claude API error - status:', claudeRes.status, '- body:', errBody);
       return res.status(claudeRes.status).json({
         error: 'Claude API error',
         status: claudeRes.status,
@@ -153,6 +204,7 @@ export default async function handler(req, res) {
     const text = data.content?.[0]?.text ?? '';
     console.log('Claude raw response:', text.slice(0, 500));
 
+    // --- Z-report ---
     if (type === 'zreport') {
       const jsonMatch = text.match(/\{[\s\S]*?\}/);
       if (!jsonMatch) return res.status(200).json({ total: null });
@@ -166,43 +218,50 @@ export default async function handler(req, res) {
       return res.status(200).json({ total: typeof parsed.total === 'number' ? parsed.total : null });
     }
 
-    // Try full invoice object first
+    // --- Invoice: parse Claude response ---
     const objMatch = text.match(/\{[\s\S]*\}/);
-    if (objMatch) {
-      let parsed;
-      try {
-        parsed = JSON.parse(objMatch[0]);
-      } catch {
-        console.error('Invalid JSON from Claude (invoice object):', objMatch[0].slice(0, 300));
-        parsed = null;
-      }
-      if (parsed?.produse !== undefined) {
-        return res.status(200).json({
-          factura: parsed.factura ?? null,
-          items: Array.isArray(parsed.produse) ? parsed.produse : [],
-        });
-      }
+    if (!objMatch) {
+      console.error('No JSON object found in Claude response:', text.slice(0, 300));
+      return res.status(200).json({ factura: null, items: [], raw: text });
     }
 
-    // Fallback: plain array
-    const arrMatch = text.match(/\[[\s\S]*\]/);
-    if (!arrMatch) {
-      console.error('No JSON found in Claude response:', text.slice(0, 300));
-      return res.status(200).json({ factura: null, items: [], raw: text });
-    }
-    let items;
+    let parsed;
     try {
-      items = JSON.parse(arrMatch[0]);
+      parsed = JSON.parse(objMatch[0]);
     } catch {
-      console.error('Invalid JSON array from Claude:', arrMatch[0].slice(0, 300));
+      console.error('Invalid JSON from Claude (invoice):', objMatch[0].slice(0, 300));
       return res.status(200).json({ factura: null, items: [], raw: text });
     }
-    return res.status(200).json({ factura: null, items: Array.isArray(items) ? items : [] });
+
+    // Map new Claude schema to existing frontend schema
+    const factura = {
+      numar: parsed.invoice_number ?? null,
+      data: parsed.date ?? null,
+      furnizor: parsed.supplier ?? null,
+      client: null,
+      total_fara_tva: typeof parsed.total === 'number' && typeof parsed.vat === 'number'
+        ? Math.round((parsed.total - parsed.vat) * 100) / 100
+        : null,
+      total_tva: typeof parsed.vat === 'number' ? parsed.vat : null,
+      total_general: typeof parsed.total === 'number' ? parsed.total : null,
+      currency: parsed.currency ?? null,
+    };
+
+    const rawItems = Array.isArray(parsed.items) ? parsed.items : [];
+    const items = rawItems
+      .filter(item => item && typeof item.name === 'string' && item.name.trim())
+      .map(item => ({
+        nume: item.name.trim(),
+        cantitate: typeof item.quantity === 'number' ? item.quantity : 1,
+        pret: typeof item.unit_price === 'number' ? item.unit_price : null,
+        total_pret: typeof item.total_price === 'number' ? item.total_price : null,
+      }));
+
+    console.log('Parsed items count:', items.length);
+    return res.status(200).json({ factura, items });
 
   } catch (err) {
     console.error('OCR ERROR:', err.message, err.stack);
     return res.status(500).json({ error: err.message, stack: err.stack });
   }
 }
-
-*/
