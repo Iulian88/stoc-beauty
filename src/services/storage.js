@@ -1,3 +1,5 @@
+import { syncUpsert, syncDelete } from './supabase';
+
 const KEYS = {
   TRANSACTIONS: 'stoc_tranzactii',
   Z_REPORTS: 'stoc_z_rapoarte',
@@ -20,6 +22,7 @@ export const storage = {
     };
     all.push(nou);
     localStorage.setItem(KEYS.TRANSACTIONS, JSON.stringify(all));
+    syncUpsert('tranzactii', nou);
     return nou;
   },
 
@@ -55,6 +58,12 @@ export const storage = {
     }
 
     localStorage.setItem(KEYS.TRANSACTIONS, JSON.stringify(updated));
+    syncDelete('tranzactii', id);
+    // If a stornare was reversed (_stornat restored), re-sync that original too
+    if (target?._stornare && target._storneazaId) {
+      const restored = updated.find(t => t.id === target._storneazaId);
+      if (restored) syncUpsert('tranzactii', restored);
+    }
   },
 
   // Creates a reversal (stornare) for a transaction.
@@ -83,6 +92,9 @@ export const storage = {
     );
     updated.push(stornare);
     localStorage.setItem(KEYS.TRANSACTIONS, JSON.stringify(updated));
+    syncUpsert('tranzactii', stornare);
+    const updatedOriginal = updated.find(t => t.id === originalId);
+    if (updatedOriginal) syncUpsert('tranzactii', updatedOriginal);
     return stornare;
   },
 
@@ -94,6 +106,8 @@ export const storage = {
     ALLOWED.forEach(k => { if (k in fields) patch[k] = String(fields[k]).trim(); });
     const updated = all.map(t => t.id === id ? { ...t, ...patch } : t);
     localStorage.setItem(KEYS.TRANSACTIONS, JSON.stringify(updated));
+    const patched = updated.find(t => t.id === id);
+    if (patched) syncUpsert('tranzactii', patched);
   },
 
   getZReports() {
@@ -107,12 +121,14 @@ export const storage = {
     const nou = { ...raport, id: Date.now(), createdAt: new Date().toISOString() };
     all.push(nou);
     localStorage.setItem(KEYS.Z_REPORTS, JSON.stringify(all));
+    syncUpsert('z_rapoarte', nou);
     return nou;
   },
 
   deleteZReport(id) {
     const all = this.getZReports().filter(r => r.id !== id);
     localStorage.setItem(KEYS.Z_REPORTS, JSON.stringify(all));
+    syncDelete('z_rapoarte', id);
   },
 
   getCustomProducts() {
@@ -132,6 +148,7 @@ export const storage = {
     };
     all.push(prod);
     localStorage.setItem(KEYS.CUSTOM_PRODUCTS, JSON.stringify(all));
+    syncUpsert('produse_custom', prod);
     return prod;
   },
 
