@@ -40,6 +40,7 @@ Extract invoice data from the image using this schema:
   },
   "lines": [
     {
+      "line_number": null,
       "raw": "",
       "name": "",
       "quantity": null,
@@ -63,6 +64,7 @@ Rules:
 - list_price = "Pret lista" or original price before any discount
 - discount_pct = discount percentage as a number (e.g. 10 for 10%)
 - total = the line total for that row (quantity × unit_price)
+- line_number = the row number from the "Nr." column (integer: 1, 2, 3, ...); if the column is absent or the value is missing for a row → null
 `;
 
 const ZREPORT_PROMPT = `This is a Z-report (fiscal end-of-day receipt).
@@ -250,6 +252,9 @@ export default async function handler(req, res) {
         const lineTotal = (item.total ?? item.total_price) != null ? Number(item.total ?? item.total_price) : null;
         const listPrice = item.list_price != null ? Number(item.list_price) : null;
         const discountPct = item.discount_pct != null ? Number(item.discount_pct) : null;
+        const lineNumber = Number.isInteger(item.line_number) ? item.line_number
+          : item.line_number != null && !isNaN(parseInt(item.line_number, 10)) ? parseInt(item.line_number, 10)
+          : null;
 
         // Priority 1: unit_price from Claude (should be "Pret dupa rabat" per prompt)
         let unitPrice = item.unit_price != null ? Number(item.unit_price) : null;
@@ -281,6 +286,7 @@ export default async function handler(req, res) {
         }
 
         console.log('[OCR LINE]', JSON.stringify({
+          line_number: lineNumber,
           name: nameStr,
           qty,
           list_price: listPrice,
@@ -297,6 +303,7 @@ export default async function handler(req, res) {
           (item.quantity != null ? 0.2 : 0) +
           (unitPrice !== null ? 0.3 : 0);
         return {
+          line_number: lineNumber,
           nume: nameStr,
           cantitate: qty,
           pret: unitPrice,
