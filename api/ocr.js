@@ -1,3 +1,18 @@
+// ── JSON extraction helpers ────────────────────────────────────────────────
+function extractJSON(text) {
+  // 1. Prefer content inside ```json ... ``` fences
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (fenceMatch) return fenceMatch[1];
+  // 2. Greedy { … } fallback
+  const objMatch = text.match(/\{[\s\S]*\}/);
+  return objMatch ? objMatch[0] : null;
+}
+function repairJSON(s) {
+  // Remove trailing commas before } or ]
+  return s.replace(/,\s*([}\]])/g, '$1');
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 const INVOICE_PROMPT = `You are an OCR extraction engine for invoices.
 
 Extract EXACTLY what you see. DO NOT normalize, DO NOT rename products.
@@ -82,7 +97,7 @@ export default async function handler(req, res) {
         },
         body: JSON.stringify({
           model,
-          max_tokens: 2048,
+          max_tokens: 4096,
           messages: [
             {
               role: 'user',
@@ -127,7 +142,12 @@ export default async function handler(req, res) {
 
     const claudeData = await claudeRes.json();
     const text = claudeData.content?.[0]?.text ?? '';
+    const stopReason = claudeData.stop_reason ?? 'unknown';
     console.log('CLAUDE RAW RESPONSE (first 1000):', text.slice(0, 1000));
+    console.log('CLAUDE STOP REASON:', stopReason);
+    if (stopReason === 'max_tokens') {
+      console.error('WARNING: Claude response was TRUNCATED — increase max_tokens or shorten prompt');
+    }
 
     // --- Z-report ---
     if (type === 'zreport') {
@@ -144,18 +164,24 @@ export default async function handler(req, res) {
     }
 
     // --- Invoice: parse Claude response ---
-    const objMatch = text.match(/\{[\s\S]*\}/);
-    if (!objMatch) {
+    const rawJson = extractJSON(text);
+    if (!rawJson) {
       console.error('No JSON object found in Claude response:', text.slice(0, 300));
       return res.status(200).json({ success: false, error: 'No JSON in Claude response', factura: null, items: [], raw: text });
     }
 
     let parsed;
     try {
-      parsed = JSON.parse(objMatch[0]);
+      parsed = JSON.parse(rawJson);
     } catch {
-      console.error('Invalid JSON from Claude (invoice):', objMatch[0].slice(0, 300));
-      return res.status(200).json({ success: false, error: 'Invalid JSON from Claude', factura: null, items: [], raw: text });
+      // Try basic repair (trailing commas, etc.)
+      try {
+        parsed = JSON.parse(repairJSON(rawJson));
+        console.log('JSON parsed after repair');
+      } catch {
+        console.error('Invalid JSON from Claude (invoice):', rawJson.slice(0, 500));
+        return res.status(200).json({ success: false, error: 'Invalid JSON from Claude', factura: null, items: [], raw: text });
+      }
     }
 
     console.log('CLAUDE PARSED:', JSON.stringify(parsed, null, 2).slice(0, 1000));
