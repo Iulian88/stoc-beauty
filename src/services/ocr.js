@@ -71,6 +71,7 @@ export async function runClaudeOCR(imageFile, onProgress) {
     onProgress?.(`✓ ${count} produs${count !== 1 ? 'e' : ''} extras${count !== 1 ? 'e' : ''}!`);
     const results = [];
     for (const item of (items || [])) {
+      console.log('[OCR PRICE]', item.nume, item.pret);
       const product = findProduct(item.nume);
       if (product) {
         const existing = results.find(r => r.productId === product.id);
@@ -81,7 +82,9 @@ export async function runClaudeOCR(imageFile, onProgress) {
             productId: product.id,
             productName: product.name,
             cantitate: item.cantitate || 1,
-            pretAchizitie: product.pretAchizitie,
+            pretAchizitie: item.pret ?? product.pretAchizitie,
+            pretAchizitieOcr: item.pret || null,
+            pretAchiziitieCatalog: product.pretAchizitie,
             pretVanzare: product.pretVanzare,
             rawLine: item.nume,
             confidence: 'auto',
@@ -92,6 +95,8 @@ export async function runClaudeOCR(imageFile, onProgress) {
           productId: null,
           productName: null,
           cantitate: item.cantitate || 1,
+          pretAchizitie: item.pret || null,
+          pretAchizitieOcr: item.pret || null,
           rawLine: item.nume,
           confidence: 'manual',
           needsReview: true,

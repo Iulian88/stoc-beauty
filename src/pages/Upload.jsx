@@ -98,7 +98,9 @@ export default function Upload({ onNavigate }) {
         ...item,
         productId: prod.id,
         productName: prod.name,
-        pretAchizitie: prod.pretAchizitie,
+        pretAchizitie: item.pretAchizitieOcr ?? prod.pretAchizitie,
+        pretAchizitieOcr: item.pretAchizitieOcr ?? null,
+        pretAchiziitieCatalog: prod.pretAchizitie,
         pretVanzare: prod.pretVanzare,
         needsReview: false,
         _confirmed: true,
@@ -578,7 +580,19 @@ export default function Upload({ onNavigate }) {
                   <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text3)' }}>
                     {isPLU
                       ? <><span style={{ color: '#dc2626' }}>↓ se scade din stoc</span> · Preț vânzare: {item.pretVanzare} RON</>
-                      : <>Achiziție: {item.pretAchizitie} RON · Vânzare: {item.pretVanzare} RON</>}
+                      : (
+                        <>
+                          {item.pretAchizitieOcr != null && item.pretAchiziitieCatalog != null && item.pretAchizitieOcr !== item.pretAchiziitieCatalog ? (
+                            <span style={{ display: 'block' }}>
+                              <span style={{ color: '#16a34a', fontWeight: 600 }}>Preț OCR: {item.pretAchizitieOcr} RON</span>
+                              <span style={{ color: '#9ca3af', marginLeft: 8 }}>(catalog: {item.pretAchiziitieCatalog} RON)</span>
+                            </span>
+                          ) : (
+                            <span>Achiziție: {item.pretAchizitie} RON</span>
+                          )}
+                          <span style={{ marginLeft: 8 }}>· Vânzare: {item.pretVanzare} RON</span>
+                        </>
+                      )}
                   </div>
                 )}
               </div>
