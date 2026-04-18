@@ -1,3 +1,14 @@
+// PROBE — remove after routing confirmed
+export default function handler(req, res) {
+  return res.status(200).json({
+    test: 'API WORKS',
+    method: req.method,
+    timestamp: Date.now(),
+  });
+}
+
+/* REAL HANDLER BELOW — temporarily disabled
+
 const INVOICE_PROMPT = `You are an accounting assistant. Analyze this invoice image and return STRICT JSON with no markdown, no explanation:
 
 {
@@ -193,3 +204,5 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: err.message, stack: err.stack });
   }
 }
+
+*/
