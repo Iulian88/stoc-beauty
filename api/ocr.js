@@ -11,6 +11,14 @@ function repairJSON(s) {
   // Remove trailing commas before } or ]
   return s.replace(/,\s*([}\]])/g, '$1');
 }
+
+// Strip leading barcode/SKU (e.g. PBR81226181) and known brand prefixes (LCARE, LSTYLE…)
+function cleanProductName(name) {
+  if (!name) return name;
+  let s = name.replace(/^[A-Za-z]{2,6}\d{5,}\s+/g, '');
+  s = s.replace(/^(LCARE|LSTYLE|CONTURA|WELLA|LONDA)\s+/i, '');
+  return s.trim();
+}
 // ─────────────────────────────────────────────────────────────────────────────
 
 const INVOICE_PROMPT = `You are an OCR + invoice parser.
@@ -61,7 +69,9 @@ VALIDATION: Verify total ≈ quantity × unit_price where possible.
 ---
 
 OTHER RULES:
-- Keep product names EXACTLY as printed on the invoice
+- name field: strip leading barcode/SKU codes (e.g. PBR81226181) and brand abbreviations (LCARE, LSTYLE, CONTURA, WELLA, LONDA) — keep only the descriptive name and size
+  Example: "PBR81640544 LCARE Visible Repair Serum 6x9 ml" → name: "Visible Repair Serum 6x9 ml"
+- raw field: keep the FULL original text as printed (including codes and brand)
 - lines must contain only real product/service rows (no subtotals, VAT rows, or summaries)
 - Convert numbers to numeric type, strip currency symbols: "1.200,00" → 1200
 - DO NOT invent values
@@ -276,7 +286,7 @@ export default async function handler(req, res) {
         return n.length > 0 || r.length > 0;
       })
       .map(item => {
-        const nameStr = (item.name || '').trim() || (item.raw || '').trim();
+        const nameStr = cleanProductName((item.name || '').trim() || (item.raw || '').trim());
         const qty = item.quantity != null ? Number(item.quantity) : 1;
         const lineTotal = (item.total ?? item.total_price) != null ? Number(item.total ?? item.total_price) : null;
         const listPrice = item.list_price != null ? Number(item.list_price) : null;
