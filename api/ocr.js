@@ -13,21 +13,63 @@ function repairJSON(s) {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
-const INVOICE_PROMPT = `You are a strict JSON generator.
+const INVOICE_PROMPT = `You are an OCR + invoice parser.
 
-Return ONLY valid JSON.
+CRITICAL OUTPUT RULE:
+* Output MUST be valid JSON
+* NO markdown
+* NO explanations
+* JSON.parse() must work directly
 
-DO NOT:
-* add explanations
-* add markdown
-* add \`\`\`json fences
-* add text before or after JSON
+---
 
-Output must be directly parsable by JSON.parse()
+GOAL: Extract structured invoice data from the image.
 
-If you are unsure about a value → use null
+---
 
-Extract invoice data from the image using this schema:
+LINE NUMBER EXTRACTION (VERY IMPORTANT)
+
+Each product line MUST include "line_number" as an integer.
+
+Rules:
+1. Extract from the LEFTMOST column labeled "Nr.", "No.", "Poz.", or similar
+2. line_number MUST be an integer (1, 2, 3, ...)
+   - NO strings
+   - NO dots: convert "1." → 1
+   - NO leading zeros: convert "03" → 3
+3. DO NOT confuse with product codes (e.g. PBR81226181), barcodes, or internal SKUs
+4. If multiple numbers exist in a row → choose ONLY the first column index number
+5. If the invoice spans multiple pages → continue numbering as seen (do NOT reset unless invoice resets)
+6. If missing → "line_number": null
+
+---
+
+PRICE RULES:
+- list_price = "Pret lista" (price BEFORE discount)
+- discount_pct = "Rabat" percentage as a number (e.g. 10 for 10%)
+- unit_price = "Pret dupa rabat" (price AFTER discount) ← CRITICAL — NEVER use "Pret lista"
+- total = "Valoare fara TVA" for that line
+
+---
+
+QUANTITY RULE: Extract EXACT quantity from "Cant." column.
+
+---
+
+VALIDATION: Verify total ≈ quantity × unit_price where possible.
+
+---
+
+OTHER RULES:
+- Keep product names EXACTLY as printed on the invoice
+- lines must contain only real product/service rows (no subtotals, VAT rows, or summaries)
+- Convert numbers to numeric type, strip currency symbols: "1.200,00" → 1200
+- DO NOT invent values
+- DO NOT merge lines
+
+---
+
+OUTPUT FORMAT (return exactly this structure):
 
 {
   "invoice": {
@@ -52,19 +94,6 @@ Extract invoice data from the image using this schema:
     }
   ]
 }
-
-Rules:
-- Keep product names EXACTLY as printed on the invoice
-- lines must contain only real product/service rows (no subtotals, VAT rows, or summaries)
-- Convert numbers to numeric type, strip currency symbols: "1.200,00" => 1200
-- DO NOT invent values
-- DO NOT merge lines
-- unit_price = "Pret dupa rabat" (price AFTER discount) — NEVER use "Pret lista"
-- If invoice has columns "Pret lista" / "Rabat %" / "Pret dupa rabat": unit_price = the "Pret dupa rabat" column value
-- list_price = "Pret lista" or original price before any discount
-- discount_pct = discount percentage as a number (e.g. 10 for 10%)
-- total = the line total for that row (quantity × unit_price)
-- line_number = the row number from the "Nr." column (integer: 1, 2, 3, ...); if the column is absent or the value is missing for a row → null
 `;
 
 const ZREPORT_PROMPT = `This is a Z-report (fiscal end-of-day receipt).
