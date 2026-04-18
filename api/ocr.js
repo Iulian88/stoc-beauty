@@ -125,9 +125,9 @@ export default async function handler(req, res) {
       });
     }
 
-    const data = await claudeRes.json();
-    const text = data.content?.[0]?.text ?? '';
-    console.log('Claude raw response:', text.slice(0, 500));
+    const claudeData = await claudeRes.json();
+    const text = claudeData.content?.[0]?.text ?? '';
+    console.log('CLAUDE RAW RESPONSE (first 1000):', text.slice(0, 1000));
 
     // --- Z-report ---
     if (type === 'zreport') {
@@ -147,7 +147,7 @@ export default async function handler(req, res) {
     const objMatch = text.match(/\{[\s\S]*\}/);
     if (!objMatch) {
       console.error('No JSON object found in Claude response:', text.slice(0, 300));
-      return res.status(200).json({ factura: null, items: [], raw: text });
+      return res.status(200).json({ success: false, error: 'No JSON in Claude response', factura: null, items: [], raw: text });
     }
 
     let parsed;
@@ -155,41 +155,81 @@ export default async function handler(req, res) {
       parsed = JSON.parse(objMatch[0]);
     } catch {
       console.error('Invalid JSON from Claude (invoice):', objMatch[0].slice(0, 300));
-      return res.status(200).json({ factura: null, items: [], raw: text });
+      return res.status(200).json({ success: false, error: 'Invalid JSON from Claude', factura: null, items: [], raw: text });
+    }
+
+    console.log('CLAUDE PARSED:', JSON.stringify(parsed, null, 2).slice(0, 1000));
+
+    // Fallback safety — Claude returned no line data at all
+    if (!parsed.lines && !parsed.items) {
+      console.error('NO LINES/ITEMS IN CLAUDE RESPONSE');
+      console.log('RAW PARSED DATA:', JSON.stringify(parsed));
+      return res.status(200).json({
+        success: false,
+        error: 'No lines returned from OCR',
+        factura: null,
+        items: [],
+        raw: parsed,
+      });
     }
 
     // Support both new schema { invoice: {}, lines: [] } and legacy flat schema
     const inv = parsed.invoice ?? parsed;
-    const totalVal = typeof inv.total === 'number' ? inv.total : null;
-    const vatVal = typeof inv.vat === 'number' ? inv.vat : null;
+    const totalVal = Number(inv.total) || null;
+    const vatVal = Number(inv.vat) || null;
 
     // Map Claude schema to frontend schema
     const factura = {
-      numar: inv.number ?? inv.invoice_number ?? null,
-      data: inv.date ?? null,
-      furnizor: inv.supplier ?? null,
+      numar: inv.number || inv.invoice_number || '',
+      data: inv.date || '',
+      furnizor: inv.supplier || '',
       client: null,
       total_fara_tva: totalVal !== null && vatVal !== null
         ? Math.round((totalVal - vatVal) * 100) / 100
         : null,
       total_tva: vatVal,
       total_general: totalVal,
-      currency: inv.currency ?? null,
+      currency: inv.currency || null,
     };
 
-    const rawItems = Array.isArray(parsed.lines) ? parsed.lines
+    const rawLines = Array.isArray(parsed.lines) ? parsed.lines
       : Array.isArray(parsed.items) ? parsed.items : [];
-    const items = rawItems
-      .filter(item => item && typeof item.name === 'string' && item.name.trim())
-      .map(item => ({
-        nume: item.name.trim(),
-        cantitate: typeof item.quantity === 'number' ? item.quantity : 1,
-        pret: typeof item.unit_price === 'number' ? item.unit_price : null,
-        total_pret: typeof (item.total ?? item.total_price) === 'number' ? (item.total ?? item.total_price) : null,
-      }));
+
+    const items = rawLines
+      // Accept item if name or raw contains something useful
+      .filter(item => {
+        if (!item) return false;
+        const n = (item.name || '').trim();
+        const r = (item.raw || '').trim();
+        return n.length > 0 || r.length > 0;
+      })
+      .map(item => {
+        const nameStr = (item.name || '').trim() || (item.raw || '').trim();
+        const qty = item.quantity != null ? Number(item.quantity) : 1;
+        const unitPrice = item.unit_price != null ? Number(item.unit_price) : null;
+        const lineTotal = (item.total ?? item.total_price) != null ? Number(item.total ?? item.total_price) : null;
+        const confidence =
+          (nameStr ? 0.5 : 0) +
+          (item.quantity != null ? 0.2 : 0) +
+          (item.unit_price != null ? 0.3 : 0);
+        return {
+          nume: nameStr,
+          cantitate: qty,
+          pret: unitPrice,
+          total_pret: lineTotal,
+          rawLine: (item.raw || '').trim(),
+          confidence,
+          needs_review: !item.name,
+        };
+      });
+
+    if (!items.length) {
+      console.error('NO ITEMS AFTER MAPPING');
+      console.log('RAW LINES:', JSON.stringify(rawLines));
+    }
 
     console.log('Parsed items count:', items.length);
-    return res.status(200).json({ factura, items });
+    return res.status(200).json({ success: true, factura, items });
 
   } catch (err) {
     console.error('OCR ERROR:', err.message, err.stack);
