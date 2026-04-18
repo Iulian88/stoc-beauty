@@ -56,37 +56,159 @@ export const PRODUCTS = [
   { id: 55, name: "Pompa Masca 750ml", aliases: ["pompa masca", "pump masca"], pretAchizitie: 30.00, pretVanzare: 30.00 },
 ];
 
-export function findProduct(text) {
-  if (!text) return null;
-  const normalized = text.toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+// ─── Feature extraction ────────────────────────────────────────────────────
 
-  let bestMatch = null;
-  let bestScore = 0;
+const PRODUCT_TYPES = {
+  shampoo:     ['shampoo', 'sampon'],
+  conditioner: ['conditioner'],
+  tratament:   ['tratament', 'masca', 'mask', 'treatment'],
+  serum:       ['serum', 'ser'],
+  oil:         ['velvet oil', 'luxe oil', 'ulei'],
+  spray:       ['spray'],
+  fixativ:     ['fixativ', 'lock it'],
+  ceara:       ['ceara', 'mud', 'gel'],
+  mousse:      ['mousse', 'spuma'],
+  cream:       ['cream', 'crema'],
+  tonic:       ['tonic'],
+  pompa:       ['pompa', 'pump'],
+  pachet:      ['pachet', 'promo', 'set'],
+};
 
-  for (const product of PRODUCTS) {
-    const nameLower = product.name.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
-    
-    // Check aliases first
-    for (const alias of product.aliases) {
-      if (normalized.includes(alias.toLowerCase())) {
-        return product; // exact alias match
-      }
-    }
+const STOP_WORDS = new Set(['and', 'the', 'for', 'buc', 'ron', 'pret', 'with']);
 
-    // Word overlap score
-    const productWords = nameLower.split(' ').filter(w => w.length > 2);
-    const inputWords = normalized.split(' ').filter(w => w.length > 2);
-    const matches = productWords.filter(w => inputWords.some(iw => iw.includes(w) || w.includes(iw)));
-    const score = matches.length / productWords.length;
+function normalizeText(text) {
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
 
-    if (score > bestScore && score >= 0.5) { // threshold: see OCR_MATCH_THRESHOLD in constants.js
-      bestScore = score;
-      bestMatch = product;
+// Extract volume token: "250ml", "1000ml", "6x9ml", "750 ml" → "250ml"
+function extractVolume(normalized) {
+  const m = normalized.match(/(\d+\s*x\s*\d+\s*ml|\d+\s*ml)/);
+  return m ? m[0].replace(/\s/g, '') : null;
+}
+
+// Detect product type (first match wins — ordered from most specific to least)
+function extractType(normalized) {
+  for (const [type, keywords] of Object.entries(PRODUCT_TYPES)) {
+    if (keywords.some(k => normalized.includes(k))) return type;
+  }
+  return null;
+}
+
+// Meaningful words: length > 2, not a stop word, not a pure number, not "ml"
+function extractKeywords(normalized) {
+  return normalized.split(' ').filter(w =>
+    w.length > 2 && !STOP_WORDS.has(w) && !/^\d+$/.test(w) && w !== 'ml'
+  );
+}
+
+function extractFeatures(text) {
+  const normalized = normalizeText(text);
+  return {
+    normalized,
+    volume: extractVolume(normalized),
+    productType: extractType(normalized),
+    keywords: extractKeywords(normalized),
+  };
+}
+
+// Pre-build features for every catalog product (name + all aliases merged)
+const PRODUCT_FEATURES = PRODUCTS.map(p =>
+  extractFeatures(p.name + ' ' + p.aliases.join(' '))
+);
+
+// ─── Scoring ───────────────────────────────────────────────────────────────
+
+function scoreCandidate(input, productIdx) {
+  const pf = PRODUCT_FEATURES[productIdx];
+  let score = 0;
+  const reasons = [];
+
+  // Volume — HARD RULE: mismatch → hard reject
+  if (input.volume && pf.volume) {
+    if (input.volume === pf.volume) {
+      score += 3;
+      reasons.push(`volume match +3 (${input.volume})`);
+    } else {
+      // Hard reject — return sentinel score so caller can skip
+      return { score: -99, reasons: [`HARD REJECT: volume ${input.volume} ≠ ${pf.volume}`] };
     }
   }
 
-  return bestMatch;
+  // Product type
+  if (input.productType && pf.productType) {
+    if (input.productType === pf.productType) {
+      score += 2;
+      reasons.push(`type match +2 (${input.productType})`);
+    } else {
+      score -= 2;
+      reasons.push(`type mismatch -2 (${input.productType} vs ${pf.productType})`);
+    }
+  }
+
+  // Keyword overlap (+1 per shared keyword)
+  const inputSet = new Set(input.keywords);
+  const overlap = pf.keywords.filter(w => inputSet.has(w));
+  if (overlap.length > 0) {
+    score += overlap.length;
+    reasons.push(`keyword overlap +${overlap.length}: [${overlap.join(', ')}]`);
+  }
+
+  return { score, reasons };
+}
+
+// ─── Main match function ────────────────────────────────────────────────────
+
+/**
+ * Returns { product, score, needsReview, reason } or null.
+ * needsReview = true when the top two candidates are too close (score diff < 2).
+ */
+export function matchProduct(text) {
+  if (!text) return null;
+
+  const input = extractFeatures(text);
+
+  // First pass: check exact alias match
+  for (const product of PRODUCTS) {
+    for (const alias of product.aliases) {
+      if (input.normalized.includes(normalizeText(alias))) {
+        console.log('[PRODUCT MATCH] ALIAS HIT:', text, '→', product.name);
+        return { product, score: 10, needsReview: false, reason: 'exact alias' };
+      }
+    }
+  }
+
+  // Second pass: score all candidates
+  const scored = PRODUCTS.map((product, idx) => {
+    const { score, reasons } = scoreCandidate(input, idx);
+    return { product, score, reasons };
+  }).filter(c => c.score > -99 && c.score >= 2); // minimum score of 2 to qualify
+
+  if (scored.length === 0) {
+    console.log('[PRODUCT MATCH] NO MATCH:', text, '| volume:', input.volume, '| type:', input.productType, '| keywords:', input.keywords.join(', '));
+    return null;
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  const best = scored[0];
+  const second = scored[1];
+
+  // Ambiguity: top two are within 1 point of each other
+  const needsReview = second != null && (best.score - second.score) < 2;
+
+  console.log('[PRODUCT MATCH]', JSON.stringify({
+    ocr: text,
+    matched: best.product.name,
+    score: best.score,
+    reasons: best.reasons,
+    runner_up: second ? `${second.product.name} (score ${second.score})` : null,
+    needs_review: needsReview,
+  }));
+
+  return { product: best.product, score: best.score, needsReview, reason: best.reasons.join('; ') };
+}
+
+// Backward-compatible wrapper — returns just the product or null
+export function findProduct(text) {
+  const result = matchProduct(text);
+  return result ? result.product : null;
 }

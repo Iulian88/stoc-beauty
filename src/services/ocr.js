@@ -1,4 +1,4 @@
-import { findProduct } from '../data/products.js';
+import { matchProduct, findProduct } from '../data/products.js';
 
 const MAX_OCR_WIDTH = 1500;
 
@@ -72,8 +72,9 @@ export async function runClaudeOCR(imageFile, onProgress) {
     const results = [];
     for (const item of (items || [])) {
       console.log('[OCR PRICE]', item.nume, item.pret);
-      const product = findProduct(item.nume);
-      if (product) {
+      const match = matchProduct(item.nume);
+      if (match) {
+        const { product, needsReview: matchNeedsReview } = match;
         const existing = results.find(r => r.productId === product.id);
         if (existing) {
           existing.cantitate += item.cantitate || 1;
@@ -91,6 +92,7 @@ export async function runClaudeOCR(imageFile, onProgress) {
             priceMismatch: item.price_mismatch || false,
             rawLine: item.nume,
             confidence: 'auto',
+            needsReview: matchNeedsReview || false,
           });
         }
       } else {
