@@ -85,14 +85,7 @@ export async function runClaudeOCR(imageFile, onProgress) {
     onProgress?.(`✓ ${count} produs${count !== 1 ? 'e' : ''} extras${count !== 1 ? 'e' : ''}!`);
     const results = [];
     for (const item of (items || [])) {
-      console.log('[OCR LINE]', {
-        line: item.line_number ?? null,
-        name: item.nume,
-        qty: item.cantitate,
-        unit: item.pret,
-        total: item.total_pret,
-        mismatch: item.price_mismatch || false,
-      });
+      console.log('[OCR LINE]', { line: item.line_number ?? null, name: item.nume, qty: item.cantitate });
       const cleanedName = cleanProductName(item.nume);
       if (cleanedName !== item.nume) {
         console.log('[OCR CLEAN]', { original: item.nume, cleaned: cleanedName });
@@ -103,9 +96,6 @@ export async function runClaudeOCR(imageFile, onProgress) {
         lineNumber: item.line_number ?? null,
         rawName: item.nume,
         quantity: item.cantitate || 1,
-        unitPrice: item.pret ?? null,
-        total: item.total_pret ?? null,
-        priceMismatch: item.price_mismatch || false,
         suggestedProductId: match ? match.product.id : null,
         suggestedProductName: match ? match.product.name : null,
         needsReview: matchNeedsReview,

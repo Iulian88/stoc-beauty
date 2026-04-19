@@ -23,49 +23,32 @@ CRITICAL OUTPUT RULE:
 
 ---
 
-GOAL: Extract structured invoice data from the image.
+GOAL: Extract product lines with line number, name, and quantity ONLY.
 
 ---
 
-LINE NUMBER EXTRACTION (VERY IMPORTANT)
-
-Each product line MUST include "line_number" as an integer.
-
-Rules:
+LINE NUMBER RULES:
 1. Extract from the LEFTMOST column labeled "Nr.", "No.", "Poz.", or similar
 2. line_number MUST be an integer (1, 2, 3, ...)
-   - NO strings
-   - NO dots: convert "1." → 1
-   - NO leading zeros: convert "03" → 3
-3. DO NOT confuse with product codes (e.g. PBR81226181), barcodes, or internal SKUs
-4. If multiple numbers exist in a row → choose ONLY the first column index number
-5. If the invoice spans multiple pages → continue numbering as seen (do NOT reset unless invoice resets)
-6. If missing → "line_number": null
+3. Convert "1." → 1, "03" → 3
+4. DO NOT confuse with product codes, barcodes, or SKUs
+5. If missing → "line_number": null
 
 ---
 
-PRICE RULES:
-- list_price = "Pret lista" (price BEFORE discount)
-- discount_pct = "Rabat" percentage as a number (e.g. 10 for 10%)
-- unit_price = "Pret dupa rabat" (price AFTER discount) ← CRITICAL — NEVER use "Pret lista"
-- total = "Valoare fara TVA" for that line
+QUANTITY RULES:
+* Extract EXACT quantity from "Cant." column
+* If quantity is missing or unclear → use 1
 
 ---
 
-QUANTITY RULE: Extract EXACT quantity from "Cant." column.
-
----
-
-VALIDATION: Verify total ≈ quantity × unit_price where possible.
-
----
-
-OTHER RULES:
-- Keep product names EXACTLY as printed on the invoice
-- lines must contain only real product/service rows (no subtotals, VAT rows, or summaries)
-- Convert numbers to numeric type, strip currency symbols: "1.200,00" → 1200
-- DO NOT invent values
-- DO NOT merge lines
+STRICT RULES:
+* IGNORE ALL PRICE COLUMNS (Pret lista, Pret dupa rabat, Rabat, Valoare, TVA)
+* IGNORE TOTALS
+* IGNORE DISCOUNTS
+* Keep product names EXACTLY as printed
+* Include ONLY real product/service rows (no subtotals, VAT rows, summaries)
+* DO NOT merge lines
 
 ---
 
@@ -75,22 +58,13 @@ OUTPUT FORMAT (return exactly this structure):
   "invoice": {
     "number": "",
     "date": "",
-    "supplier": "",
-    "currency": "",
-    "total": null,
-    "vat": null
+    "supplier": ""
   },
   "lines": [
     {
-      "line_number": null,
-      "raw": "",
-      "name": "",
-      "quantity": null,
-      "unit": "",
-      "list_price": null,
-      "discount_pct": null,
-      "unit_price": null,
-      "total": null
+      "line_number": 1,
+      "name": "LCARE Color Radiance Shampoo 1000 ml",
+      "quantity": 4
     }
   ]
 }
@@ -247,21 +221,12 @@ export default async function handler(req, res) {
 
     // Support both new schema { invoice: {}, lines: [] } and legacy flat schema
     const inv = parsed.invoice ?? parsed;
-    const totalVal = Number(inv.total) || null;
-    const vatVal = Number(inv.vat) || null;
 
     // Map Claude schema to frontend schema
     const factura = {
-      numar: inv.number || inv.invoice_number || '',
+      numar: inv.number || '',
       data: inv.date || '',
       furnizor: inv.supplier || '',
-      client: null,
-      total_fara_tva: totalVal !== null && vatVal !== null
-        ? Math.round((totalVal - vatVal) * 100) / 100
-        : null,
-      total_tva: vatVal,
-      total_general: totalVal,
-      currency: inv.currency || null,
     };
 
     const rawLines = Array.isArray(parsed.lines) ? parsed.lines
@@ -279,72 +244,16 @@ export default async function handler(req, res) {
       .map(item => {
         const nameStr = (item.name || '').trim() || (item.raw || '').trim();
         const qty = item.quantity != null ? Number(item.quantity) : 1;
-        const lineTotal = (item.total ?? item.total_price) != null ? Number(item.total ?? item.total_price) : null;
-        const listPrice = item.list_price != null ? Number(item.list_price) : null;
-        const discountPct = item.discount_pct != null ? Number(item.discount_pct) : null;
         const lineNumber = Number.isInteger(item.line_number) ? item.line_number
           : item.line_number != null && !isNaN(parseInt(item.line_number, 10)) ? parseInt(item.line_number, 10)
           : null;
 
-        // Priority 1: unit_price from Claude (should be "Pret dupa rabat" per prompt)
-        let unitPrice = item.unit_price != null ? Number(item.unit_price) : null;
-        let source = 'direct';
+        console.log('[OCR LINE]', JSON.stringify({ line_number: lineNumber, name: nameStr, qty }));
 
-        // Detect wrong extraction: discount exists but unit_price ≈ list_price → Claude returned list price by mistake
-        if (unitPrice !== null && listPrice !== null && discountPct != null && discountPct > 0) {
-          if (Math.abs(unitPrice - listPrice) < 0.01) {
-            console.log('[OCR LINE] REJECT — unit_price ≈ list_price with discount, forcing fallback:', nameStr, { unitPrice, listPrice, discountPct });
-            unitPrice = null;
-          }
-        }
-
-        // Priority 2: compute from total / quantity
-        if (unitPrice === null && lineTotal !== null && qty > 0) {
-          unitPrice = Math.round((lineTotal / qty) * 100) / 100;
-          source = 'computed';
-        }
-
-        if (unitPrice !== null && source === 'direct') source = 'discount';
-        if (unitPrice === null) source = 'unknown';
-
-        // Validate: unit_price × quantity ≈ total (tolerance 1% or 0.05 RON)
-        let priceMismatch = false;
-        if (unitPrice !== null && lineTotal !== null) {
-          const expected = Math.round(unitPrice * qty * 100) / 100;
-          const tolerance = Math.max(0.05, expected * 0.01);
-          priceMismatch = Math.abs(expected - lineTotal) > tolerance;
-        }
-
-        console.log('[OCR LINE]', JSON.stringify({
-          line_number: lineNumber,
-          name: nameStr,
-          qty,
-          list_price: listPrice,
-          discount_pct: discountPct,
-          unit_price_raw: item.unit_price,
-          unit_price_final: unitPrice,
-          total: lineTotal,
-          source,
-          price_mismatch: priceMismatch,
-        }));
-
-        const confidence =
-          (nameStr ? 0.5 : 0) +
-          (item.quantity != null ? 0.2 : 0) +
-          (unitPrice !== null ? 0.3 : 0);
         return {
           line_number: lineNumber,
           nume: nameStr,
           cantitate: qty,
-          pret: unitPrice,
-          total_pret: lineTotal,
-          list_price: listPrice,
-          discount_pct: discountPct,
-          source,
-          price_mismatch: priceMismatch,
-          rawLine: (item.raw || '').trim(),
-          confidence,
-          needs_review: !item.name,
         };
       });
 

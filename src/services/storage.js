@@ -136,14 +136,12 @@ export const storage = {
     catch { return []; }
   },
 
-  saveCustomProduct({ name, pretAchizitie, pretVanzare }) {
+  saveCustomProduct({ name }) {
     const all = this.getCustomProducts();
     const prod = {
       id: Date.now(),
       name,
       aliases: [],
-      pretAchizitie: Number(Number(pretAchizitie).toFixed(2)),
-      pretVanzare: Number(Number(pretVanzare).toFixed(2)),
       isCustom: true,
     };
     all.push(prod);
