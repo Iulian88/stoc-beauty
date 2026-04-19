@@ -4,6 +4,7 @@ import Upload from './pages/Upload';
 import Transactions from './pages/Transactions';
 import Stock from './pages/Stock';
 import ZReports from './pages/ZReports';
+import Inventory from './pages/Inventory';
 import { StockProvider } from './context/StockContext';
 import ErrorBoundary from './components/ErrorBoundary';
 import './App.css';
@@ -13,7 +14,7 @@ const NAV = [
   { id: 'upload', label: 'Adaugă', icon: '📸' },
   { id: 'stock', label: 'Stoc', icon: '📦' },
   { id: 'transactions', label: 'Istoric', icon: '📋' },
-  { id: 'zreports', label: 'Z-uri', icon: '🧾' },
+  { id: 'inventory', label: 'Inventar', icon: '🗂️' },
 ];
 
 export default function App() {
@@ -39,6 +40,7 @@ export default function App() {
           {page === 'stock' && <Stock />}
           {page === 'transactions' && <Transactions />}
           {page === 'zreports' && <ZReports />}
+          {page === 'inventory' && <Inventory />}
         </ErrorBoundary>
       </main>
 

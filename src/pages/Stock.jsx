@@ -11,7 +11,8 @@ export default function Stock() {
     return Object.values(stock)
       .filter(s => {
         if (filter === 'ok') return s.stoc > 0;
-        if (filter === 'epuizat') return s.stoc <= 0;
+        if (filter === 'epuizat') return s.stoc === 0;
+        if (filter === 'negativ') return s.isNegative;
         return true;
       })
       .filter(s => {
@@ -21,7 +22,8 @@ export default function Stock() {
       .sort((a, b) => b.stoc - a.stoc);
   }, [stock, filter, search]);
 
-  const epuizate = Object.values(stock).filter(s => s.stoc <= 0).length;
+  const epuizate = Object.values(stock).filter(s => s.stoc === 0).length;
+  const negative = Object.values(stock).filter(s => s.isNegative).length;
   const disponibile = Object.values(stock).filter(s => s.stoc > 0).length;
 
   return (
@@ -38,11 +40,17 @@ export default function Stock() {
           <div className="stat-label">Epuizate</div>
           <div className={`stat-value ${epuizate > 0 ? 'red' : ''}`}>{epuizate}</div>
         </div>
+        {negative > 0 && (
+          <div className="stat-card">
+            <div className="stat-label">⚠ Negative</div>
+            <div className="stat-value red">{negative}</div>
+          </div>
+        )}
       </div>
 
       <div className="card" style={{ marginBottom: 12 }}>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {['all', 'ok', 'epuizat'].map(f => (
+          {['all', 'ok', 'epuizat', 'negativ'].map(f => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -53,7 +61,7 @@ export default function Stock() {
                 border: `1px solid ${filter === f ? 'var(--accent)' : 'var(--border2)'}`,
               }}
             >
-              {f === 'all' ? 'Toate' : f === 'ok' ? '✓ În stoc' : '✗ Epuizate'}
+              {f === 'all' ? 'Toate' : f === 'ok' ? '✓ În stoc' : f === 'epuizat' ? '✗ Epuizate' : '⚠ Negative'}
             </button>
           ))}
         </div>
@@ -84,8 +92,8 @@ export default function Stock() {
                 </div>
               </div>
               <div className="list-item-right">
-                <span className={`badge ${stoc > 3 ? 'badge-green' : stoc > 0 ? 'badge-yellow' : 'badge-red'}`}>
-                  {stoc > 0 ? `${stoc} buc` : 'Epuizat'}
+                <span className={`badge ${stoc > 3 ? 'badge-green' : stoc > 0 ? 'badge-yellow' : stoc === 0 ? 'badge-red' : 'badge-red'}`}>
+                  {stoc > 0 ? `${stoc} buc` : stoc === 0 ? 'Epuizat' : `STOC NEGATIV: ${stoc}`}
                 </span>
               </div>
             </div>

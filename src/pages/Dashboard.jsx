@@ -10,7 +10,8 @@ export default function Dashboard({ onNavigate }) {
   const iesiri = transactions.filter(t => t.tip === 'iesire').length;
 
   const stockItems = Object.values(stock);
-  const subStoc = stockItems.filter(s => s.stoc <= 0).length;
+  const subStoc = stockItems.filter(s => s.stoc <= 0 && !s.isNegative).length;
+  const negative = stockItems.filter(s => s.isNegative);
   const okStoc = stockItems.filter(s => s.stoc > 0).length;
   const peTerminate = stockItems.filter(s => s.stoc > 0 && s.stoc <= ON_TERMINATE_THRESHOLD);
 
@@ -33,7 +34,7 @@ export default function Dashboard({ onNavigate }) {
         </div>
         <div className="stat-card">
           <div className="stat-label">Stoc epuizat</div>
-          <div className={`stat-value ${subStoc > 0 ? 'red' : ''}`}>{subStoc}</div>
+          <div className={`stat-value ${(subStoc + negative.length) > 0 ? 'red' : ''}`}>{subStoc + negative.length}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">📥 Intrări</div>
@@ -44,6 +45,18 @@ export default function Dashboard({ onNavigate }) {
           <div className="stat-value small">{iesiri}</div>
         </div>
       </div>
+
+      {negative.length > 0 && (
+        <div className="card" style={{ borderLeft: '4px solid #dc2626', marginBottom: 12 }}>
+          <div className="card-title" style={{ color: '#dc2626' }}>⚠ Probleme stoc ({negative.length})</div>
+          {negative.map(s => (
+            <div key={s.product.id} className="list-item">
+              <div className="list-item-name">{s.product.name}</div>
+              <span className="badge badge-red">STOC NEGATIV: {s.stoc}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {peTerminate.length > 0 && (
         <div className="card" style={{ borderLeft: '4px solid #f59e0b', marginBottom: 12 }}>

@@ -15,10 +15,30 @@ export const storage = {
   },
 
   saveTransaction(tranzactie) {
+    // Validate negative stock for outgoing transactions (skip for stornare / inventory corrections)
+    if (tranzactie.tip === 'iesire' && !tranzactie._stornare && !tranzactie._skipStockValidation && Array.isArray(tranzactie.items)) {
+      const currentTx = this.getTransactions();
+      const stockById = {};
+      currentTx.forEach(t => {
+        t.items?.forEach(item => {
+          stockById[item.productId] = (stockById[item.productId] || 0)
+            + (t.tip === 'intrare' ? item.cantitate : -item.cantitate);
+        });
+      });
+      for (const item of tranzactie.items) {
+        const current = stockById[item.productId] ?? 0;
+        if (current - item.cantitate < 0) {
+          throw new Error(`Stoc insuficient pentru "${item.productName}": disponibil ${Math.max(0, current)} buc, cerut ${item.cantitate} buc.`);
+        }
+      }
+    }
+
     const all = this.getTransactions();
+    // Strip internal runtime flags before persisting
+    const { _skipStockValidation: _s, ...rest } = tranzactie;
     const nou = {
-      ...tranzactie,
-      id: Date.now(),
+      ...rest,
+      id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
     };
     all.push(nou);
@@ -78,7 +98,7 @@ export const storage = {
     if (original._stornare) throw new Error('Nu se poate storna o corecție — șterge-o direct.');
 
     const stornare = {
-      id: Date.now(),
+      id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       // Opposite tip so stock calculation cancels the original naturally
       tip: original.tip === 'intrare' ? 'iesire' : 'intrare',
@@ -119,7 +139,7 @@ export const storage = {
 
   saveZReport(raport) {
     const all = this.getZReports();
-    const nou = { ...raport, id: Date.now(), createdAt: new Date().toISOString() };
+    const nou = { ...raport, id: crypto.randomUUID(), createdAt: new Date().toISOString() };
     all.push(nou);
     localStorage.setItem(KEYS.Z_REPORTS, JSON.stringify(all));
     syncUpsert('z_rapoarte', nou);
@@ -140,7 +160,7 @@ export const storage = {
   saveCustomProduct({ name }) {
     const all = this.getCustomProducts();
     const prod = {
-      id: Date.now(),
+      id: crypto.randomUUID(),
       name,
       aliases: [],
       isCustom: true,
@@ -266,6 +286,7 @@ export const storage = {
 
     Object.keys(stock).forEach(id => {
       stock[id].stoc = stock[id].intrari - stock[id].iesiri;
+      stock[id].isNegative = stock[id].stoc < 0;
     });
 
     return stock;
