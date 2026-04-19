@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useStock } from '../context/StockContext';
+import { storage } from '../services/storage';
 
 export default function Stock() {
   const { stock } = useStock();
@@ -20,9 +21,7 @@ export default function Stock() {
       .sort((a, b) => b.stoc - a.stoc);
   }, [stock, filter, search]);
 
-  const valoareTotala = Object.values(stock).reduce((acc, s) => {
-    return acc + (s.stoc > 0 ? s.stoc * s.product.pretAchizitie : 0);
-  }, 0);
+  const valoareTotala = storage.computeWeightedStockValue(stock);
 
   const epuizate = Object.values(stock).filter(s => s.stoc <= 0).length;
   const disponibile = Object.values(stock).filter(s => s.stoc > 0).length;
@@ -84,16 +83,18 @@ export default function Stock() {
                 <div className="list-item-name">{product.name}</div>
                 <div className="list-item-meta">
                   ↑{intrari} intrări · ↓{iesiri} ieșiri
-                  {stoc > 0 && <span> · {(stoc * product.pretAchizitie).toFixed(2)} RON val.</span>}
+                  {stoc > 0 && product.pretAchizitie != null && <span> · {(stoc * product.pretAchizitie).toFixed(2)} RON val.</span>}
                 </div>
               </div>
               <div className="list-item-right">
                 <span className={`badge ${stoc > 3 ? 'badge-green' : stoc > 0 ? 'badge-yellow' : 'badge-red'}`}>
                   {stoc > 0 ? `${stoc} buc` : 'Epuizat'}
                 </span>
-                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
-                  {product.pretAchizitie} RON
-                </div>
+                {product.pretAchizitie != null && (
+                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                    {product.pretAchizitie} RON
+                  </div>
+                )}
               </div>
             </div>
           ))
@@ -101,7 +102,7 @@ export default function Stock() {
       </div>
 
       <div className="card">
-        <div className="stat-label">Valoare totală stoc (preț achiziție)</div>
+        <div className="stat-label">Valoare totală stoc (preț achiziție medie)</div>
         <div className="stat-value gold">{valoareTotala.toFixed(2)} RON</div>
       </div>
     </div>

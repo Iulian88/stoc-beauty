@@ -1,5 +1,19 @@
 import { matchProduct } from '../data/products.js';
 
+/**
+ * Strip SKU codes, brand names, and other noise from OCR product names
+ * before passing to matchProduct(). Prevents mismatches on lines like:
+ *   "PBR81640544 LCARE Visible Repair Serum 6x9ml"
+ */
+export function cleanProductName(name) {
+  if (!name) return name;
+  return name
+    .replace(/\b[A-Z0-9]{6,}\b/g, '')                     // remove SKU codes (6+ uppercase alphanumeric)
+    .replace(/\b(LCARE|WELLA|LONDA|SCHWARZKOPF)\b/gi, '')  // remove known brand names
+    .replace(/\s+/g, ' ')                                  // collapse whitespace
+    .trim();
+}
+
 const MAX_OCR_WIDTH = 1500;
 
 /**
@@ -80,7 +94,11 @@ export async function runClaudeOCR(imageFile, onProgress) {
         total: item.total_pret,
         mismatch: _mismatch,
       });
-      const match = matchProduct(item.nume);
+      const cleanedName = cleanProductName(item.nume);
+      if (cleanedName !== item.nume) {
+        console.log('[OCR CLEAN]', { original: item.nume, cleaned: cleanedName });
+      }
+      const match = matchProduct(cleanedName);
       if (match) {
         const { product, needsReview: matchNeedsReview } = match;
         const existing = results.find(r => r.productId === product.id);

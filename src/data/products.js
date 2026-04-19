@@ -1,7 +1,15 @@
-// CATALOG — defines SELLING PRICES (pretVanzare) only.
-// pretAchizitie is kept here as a reference/fallback ONLY.
-// DO NOT use product.pretAchizitie in financial calculations.
-// All cost calculations MUST use item.pretAchizitie from the saved transaction.
+/*
+ * IMPORTANT — READ BEFORE EDITING:
+ * ───────────────────────────────────────────────────────────────────────────
+ * Catalog is the SELLING layer ONLY.
+ *   ✔ pretVanzare  — selling price (authoritative, use everywhere)
+ *   ✖ pretAchizitie — DEPRECATED. Reference/fallback only, NOT used in
+ *                     financial calculations. Values are inflated/unreliable.
+ *                     Will be removed after Stock.jsx display is updated.
+ * Real purchase cost comes ONLY from invoices via OCR:
+ *   → stored as item.pretAchizitie in each saved transaction
+ * ───────────────────────────────────────────────────────────────────────────
+ */
 export const PRODUCTS = [
   { id: 1, name: "Color Radiance Conditioner 1000ml", aliases: ["color radiance conditioner 1000", "cond color radiance 1000"], pretAchizitie: 113.74, pretVanzare: 73.93 },
   { id: 2, name: "Color Radiance Conditioner Spray 250ml", aliases: ["color radiance conditioner spray", "cond spray color radiance"], pretAchizitie: 67.67, pretVanzare: 44.04 },
@@ -26,7 +34,7 @@ export const PRODUCTS = [
   { id: 21, name: "Visible Repair Shampoo 250ml", aliases: ["visible repair sampon 250", "visible repair shampoo 250"], pretAchizitie: 54.45, pretVanzare: 35.39 },
   { id: 22, name: "Visible Repair Tratament 200ml", aliases: ["visible repair trat 200", "visible repair masca 200"], pretAchizitie: 78.65, pretVanzare: 51.12 },
   { id: 23, name: "Visible Repair Tratament 750ml", aliases: ["visible repair trat 750", "visible repair masca 750"], pretAchizitie: 123.42, pretVanzare: 80.22 },
-  { id: 24, name: "Vital Booster Serum 6x9ml", aliases: ["vital booster serum", "vital booster ser"], pretAchizitie: 107.69, pretVanzare: 69.99 },
+  { id: 24, name: "Vital Booster Serum 6x9ml", aliases: ["vital booster serum", "vital booster ser", "vital booster 6x9", "vital ser 6x9"], pretAchizitie: 107.69, pretVanzare: 69.99 },
   { id: 25, name: "Vital Booster Shampoo 1000ml", aliases: ["vital booster sampon 1000", "vital booster shampoo 1000"], pretAchizitie: 89.54, pretVanzare: 58.28 },
   { id: 26, name: "Vital Booster Shampoo 250ml", aliases: ["vital booster sampon 250", "vital booster shampoo 250"], pretAchizitie: 54.45, pretVanzare: 35.39 },
   { id: 27, name: "Coil Up Cream 200ml", aliases: ["coil up cream", "coil up"], pretAchizitie: 71.39, pretVanzare: 46.40 },
@@ -58,6 +66,7 @@ export const PRODUCTS = [
   { id: 53, name: "Live In Curl Definer", aliases: ["live in curl", "curl definer live in", "live in curl definer"], pretAchizitie: 53.24, pretVanzare: 34.60 },
   { id: 54, name: "Pompa Sampon 1000ml", aliases: ["pompa sampon", "pump sampon"], pretAchizitie: 30.00, pretVanzare: 30.00 },
   { id: 55, name: "Pompa Masca 750ml", aliases: ["pompa masca", "pump masca"], pretAchizitie: 30.00, pretVanzare: 30.00 },
+  { id: 56, name: "Visible Repair Serum 6x9ml", aliases: ["visible repair serum", "visible repair ser", "visible repair 6x9", "visible repair serum 6x9", "visible serum"], pretAchizitie: null, pretVanzare: 69.99 },
 ];
 
 // ─── Feature extraction ────────────────────────────────────────────────────
@@ -149,9 +158,9 @@ function scoreCandidate(input, productIdx) {
     }
   }
 
-  // Keyword overlap (+1 per shared keyword)
+  // Keyword overlap (+1 per shared keyword, deduplicated to avoid alias inflation)
   const inputSet = new Set(input.keywords);
-  const overlap = pf.keywords.filter(w => inputSet.has(w));
+  const overlap = [...new Set(pf.keywords)].filter(w => inputSet.has(w));
   if (overlap.length > 0) {
     score += overlap.length;
     reasons.push(`keyword overlap +${overlap.length}: [${overlap.join(', ')}]`);
@@ -175,8 +184,8 @@ export function matchProduct(text) {
   for (const product of PRODUCTS) {
     for (const alias of product.aliases) {
       if (input.normalized.includes(normalizeText(alias))) {
-        console.log('[PRODUCT MATCH] ALIAS HIT:', text, '→', product.name);
-        return { product, score: 10, needsReview: false, reason: 'exact alias' };
+        console.log('[PRODUCT MATCH]', JSON.stringify({ ocr: text, matched: product.name, score: 10, alias_matched: true, needs_review: false, reason: 'exact alias' }));
+        return { product, score: 10, needsReview: false, reason: 'exact alias', aliasMatched: true };
       }
     }
   }
@@ -206,9 +215,10 @@ export function matchProduct(text) {
     reasons: best.reasons,
     runner_up: second ? `${second.product.name} (score ${second.score})` : null,
     needs_review: needsReview,
+    alias_matched: false,
   }));
 
-  return { product: best.product, score: best.score, needsReview, reason: best.reasons.join('; ') };
+  return { product: best.product, score: best.score, needsReview, reason: best.reasons.join('; '), aliasMatched: false };
 }
 
 // Backward-compatible wrapper — returns just the product or null

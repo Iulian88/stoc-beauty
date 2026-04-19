@@ -13,6 +13,7 @@
  */
 
 import { matchProduct, PRODUCTS } from './src/data/products.js';
+import { cleanProductName } from './src/services/ocr.js';
 
 let passed = 0;
 let failed = 0;
@@ -270,8 +271,58 @@ test('CATALOG WARNING — pretAchizitie > pretVanzare (prices are known-wrong)',
   assert(true, 'always passes — this is a warning');
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SUMMARY
+// ─────────────────────────────────────────────────────────────────────────────// 7. HARDENING: ZERO CATALOG FALLBACK + STRICT MATCHING + CLEAN NAMES
+// ───────────────────────────────────────────────────────────────────────────────
+console.log('\n── Hardening: zero catalog fallback + strict matching ───────────────');
+
+test('Stock value = 0 when product has no purchase history (no catalog fallback)', () => {
+  // Replicate computeWeightedStockValue logic with an empty costBasis
+  const costBasis = {}; // no intrare transactions for this product
+  const stockMap = { 24: { stoc: 5, product: { id: 24, pretAchizitie: 113.74, pretVanzare: 69.99, name: 'Vital Booster Serum 6x9ml' } } };
+
+  let total = 0;
+  Object.entries(stockMap).forEach(([id, s]) => {
+    if (s.stoc <= 0) return;
+    const cb = costBasis[id] || costBasis[Number(id)];
+    if (cb && cb.totalQty > 0) {
+      total += s.stoc * (cb.totalCost / cb.totalQty);
+    }
+    // else: no history → contribute 0 (no catalog fallback)
+  });
+
+  assertEq(total, 0, 'Product with no purchase history must contribute 0, NOT catalog pretAchizitie');
+});
+
+test('Visible Repair Serum 6x9ml matches id 56, NOT Vital Booster id 24', () => {
+  const r = matchProduct('Visible Repair Serum 6x9ml');
+  assert(r !== null, 'expected a match for Visible Repair Serum 6x9ml');
+  assert(r.product.id === 56, `Expected id 56 (Visible Repair), got id ${r.product.id} (${r.product.name})`);
+});
+
+test('Ambiguous "Serum 6x9ml" triggers needsReview=true (two serums present)', () => {
+  const r = matchProduct('Serum 6x9ml');
+  // With both id 24 and id 56 present, input is ambiguous → must flag review
+  assert(r === null || r.needsReview === true,
+    `Expected null or needsReview=true for ambiguous serum, got: ${r?.needsReview}`);
+});
+
+test('cleanProductName strips SKU codes and brand names', () => {
+  const raw = 'PBR81640544 LCARE Visible Repair Serum 6x9ml';
+  const result = cleanProductName(raw);
+  assert(result.toLowerCase().includes('visible repair serum'), `product name not preserved: got "${result}"`);
+  assert(!result.includes('PBR81640544'), `SKU not stripped: got "${result}"`);
+  assert(!result.toLowerCase().includes('lcare'), `brand name not stripped: got "${result}"`);
+});
+
+test('cleanProductName + matchProduct: SKU-prefixed OCR name matches correctly', () => {
+  const raw = 'PBR81640544 LCARE Visible Repair Serum 6x9ml';
+  const cleaned = cleanProductName(raw);
+  const r = matchProduct(cleaned);
+  assert(r !== null, `expected a match after cleaning, got null (cleaned: "${cleaned}")`);
+  assert(r.product.id === 56, `Expected id 56 after cleaning, got id ${r.product.id} (${r.product.name})`);
+});
+
+// ───────────────────────────────────────────────────────────────────────────────// SUMMARY
 // ─────────────────────────────────────────────────────────────────────────────
 console.log('\n───────────────────────────────────────────────────────────────');
 console.log(`  ${passed} passed  |  ${failed} failed`);

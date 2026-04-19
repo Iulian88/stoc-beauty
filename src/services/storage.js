@@ -323,8 +323,8 @@ export const storage = {
         const avgCost = cb.totalCost / cb.totalQty;
         total += s.stoc * avgCost;
       } else {
-        // No purchase history with invoice price → fall back to catalog (reference only)
-        total += s.stoc * (s.product.pretAchizitie || 0);
+        // No purchase history with a real invoice price → cost unknown, excluded from total
+        // Catalog pretAchizitie intentionally NOT used here (values are inflated/unreliable)
       }
     });
 

@@ -609,9 +609,7 @@ export default function Upload({ onNavigate }) {
                           {item.pretAchizitieOcr != null ? (
                             <span style={{ display: 'block' }}>
                               <span style={{ color: '#16a34a', fontWeight: 600 }}>Preț achiziție (factură): {item.pretAchizitieOcr} RON / buc</span>
-                              {item.pretAchiziitieCatalog != null && (
-                                <span style={{ color: '#9ca3af', marginLeft: 8, fontSize: 11 }}>(referință catalog: {item.pretAchiziitieCatalog} RON)</span>
-                              )}
+
                             </span>
                           ) : item.pretAchizitie != null ? (
                             <span style={{ display: 'block' }}>Preț achiziție: {item.pretAchizitie} RON / buc</span>
