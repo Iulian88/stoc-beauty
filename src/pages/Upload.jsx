@@ -3,9 +3,8 @@ import { runClaudeOCR, cleanupWorker, cleanProductName } from '../services/ocr';
 import { storage } from '../services/storage';
 import { PRODUCTS } from '../data/products';
 import { useStock } from '../context/StockContext';
-import { MAX_FILE_SIZE_BYTES } from '../constants';
 
-const MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB — compresia se face înainte de OCR
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
 const STEPS = ['Tip & Imagine', 'OCR', 'Verificare', 'Salvat'];
 
@@ -16,6 +15,8 @@ export default function Upload({ onNavigate }) {
 
   // Cleanup Tesseract worker when leaving the Upload page
   useEffect(() => () => { cleanupWorker(); }, []);
+
+  // ── Intrare (OCR invoice) state ───────────────────────────────────────────
   const [sursa, setSursa] = useState('');
   const [facturaData, setFacturaData] = useState(null);
   const [imageFile, setImageFile] = useState(null);
@@ -29,6 +30,78 @@ export default function Upload({ onNavigate }) {
   const fileRef = useRef();
   const cameraRef = useRef();
 
+  // ── Iesire (vânzări raport casă) state ───────────────────────────────────
+  const [salesItems, setSalesItems] = useState([]);     // [{ id, productId, productName, cantitate }]
+  const [salesSearch, setSalesSearch] = useState('');   // text filter for product dropdown
+  const [salesProductId, setSalesProductId] = useState('');
+  const [salesQty, setSalesQty] = useState(1);
+  const [salesRef, setSalesRef] = useState('');         // optional reference
+  const [salesSaved, setSalesSaved] = useState(false);  // success state for iesire
+
+  const allProducts = [...PRODUCTS, ...customProducts];
+  const isPLU = docType === 'iesire';
+
+  const filteredProducts = allProducts.filter(p =>
+    salesSearch === '' || p.name.toLowerCase().includes(salesSearch.toLowerCase())
+  );
+
+  function addSalesItem() {
+    const id = parseInt(salesProductId);
+    if (!id) return;
+    const prod = allProducts.find(p => p.id === id);
+    if (!prod) return;
+    const qty = Math.max(1, salesQty || 1);
+    setSalesItems(prev => {
+      const existing = prev.find(i => i.productId === id);
+      if (existing) {
+        // Merge quantities
+        return prev.map(i => i.productId === id ? { ...i, cantitate: i.cantitate + qty } : i);
+      }
+      return [...prev, { id: Date.now(), productId: id, productName: prod.name, cantitate: qty }];
+    });
+    setSalesProductId('');
+    setSalesSearch('');
+    setSalesQty(1);
+  }
+
+  function removeSalesItem(id) {
+    setSalesItems(prev => prev.filter(i => i.id !== id));
+  }
+
+  function updateSalesCantitate(id, val) {
+    const qty = Math.max(1, parseInt(val) || 1);
+    setSalesItems(prev => prev.map(i => i.id === id ? { ...i, cantitate: qty } : i));
+  }
+
+  function incrementSalesItem(id) {
+    setSalesItems(prev => prev.map(i => i.id === id ? { ...i, cantitate: i.cantitate + 1 } : i));
+  }
+
+  function saveSalesTransaction() {
+    if (salesItems.length === 0) return;
+    storage.saveTransaction({
+      tip: 'iesire',
+      sursa: salesRef.trim() || 'raport casa',
+      items: salesItems.map(i => ({
+        productId: i.productId,
+        productName: i.productName,
+        cantitate: i.cantitate,
+      })),
+    });
+    refresh();
+    setSalesSaved(true);
+  }
+
+  function resetSales() {
+    setSalesItems([]);
+    setSalesSearch('');
+    setSalesProductId('');
+    setSalesQty(1);
+    setSalesRef('');
+    setSalesSaved(false);
+  }
+
+  // ── Intrare handlers ──────────────────────────────────────────────────────
   function handleFile(file) {
     if (!file) return;
     if (file.size > MAX_UPLOAD_BYTES) {
@@ -50,7 +123,6 @@ export default function Upload({ onNavigate }) {
       return;
     }
 
-    // Auto-fill sursa from invoice metadata if field is empty
     if (result.factura) {
       setFacturaData(result.factura);
       if (!sursa) {
@@ -61,7 +133,6 @@ export default function Upload({ onNavigate }) {
       }
     }
 
-    // Al doilea pass: potrivire cu produse custom salvate
     const customProds = storage.getCustomProducts();
     const remapped = result.items.map(item => {
       if (item.suggestedProductId) return item;
@@ -74,7 +145,6 @@ export default function Upload({ onNavigate }) {
       return item;
     });
 
-    // Al treilea pass: potrivire cu alias-uri învățate de utilizator
     const learnedAliases = storage.getLearnedAliases();
     const allProds = [...PRODUCTS, ...customProds];
     const remapped2 = remapped.map(item => {
@@ -122,7 +192,6 @@ export default function Upload({ onNavigate }) {
         _confirmed: true,
       } : item
     ));
-    // Exit edit mode once a product is selected
     setEditModeItems(prev => { const next = new Set(prev); next.delete(idx); return next; });
   }
 
@@ -203,7 +272,7 @@ export default function Upload({ onNavigate }) {
 
     storage.saveTransaction({
       tip: docType,
-      sursa: sursa || (docType === 'intrare' ? 'Factură' : 'Raport PLU'),
+      sursa: sursa || 'Factură',
       factura: facturaData ?? undefined,
       items: validItems.map(item => ({
         productId: item._productId,
@@ -218,7 +287,6 @@ export default function Upload({ onNavigate }) {
 
   function reset() {
     setStep(0);
-    setDocType('intrare');
     setSursa('');
     setFacturaData(null);
     setImageFile(null);
@@ -230,10 +298,7 @@ export default function Upload({ onNavigate }) {
 
   const confirmedCount = parsedItems.filter(i => i._confirmed && i._productId).length;
   const needsReviewCount = parsedItems.filter(i => (i.needsReview || !i._productId) && !i._confirmed).length;
-  const allProducts = [...PRODUCTS, ...customProducts];
-  const isPLU = docType === 'iesire';
 
-  // T2: sort by lineNumber ascending, nulls last
   const sortedItems = [...parsedItems].sort((a, b) => {
     if (a.lineNumber != null && b.lineNumber != null) return a.lineNumber - b.lineNumber;
     if (a.lineNumber != null) return -1;
@@ -241,9 +306,201 @@ export default function Upload({ onNavigate }) {
     return 0;
   });
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // RENDER: "Introdu vânzări" (iesire) — completely separate from OCR flow
+  // ══════════════════════════════════════════════════════════════════════════
+  if (isPLU) {
+    if (salesSaved) {
+      return (
+        <div>
+          <p className="page-title">Introdu vânzări</p>
+          <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+            <div style={{ fontSize: 56, marginBottom: 16 }}>✅</div>
+            <div style={{ fontFamily: 'DM Serif Display, serif', fontSize: 22, marginBottom: 8 }}>Salvat cu succes!</div>
+            <div style={{ color: 'var(--text3)', fontSize: 14, marginBottom: 32 }}>
+              {salesItems.length} produs{salesItems.length !== 1 ? 'e' : ''} au fost{' '}
+              <strong style={{ color: '#dc2626' }}>scăzute din stoc</strong> (vânzări raport casă).
+            </div>
+            <button className="btn btn-primary" onClick={() => { resetSales(); setDocType('iesire'); }} style={{ marginBottom: 10, background: '#dc2626', borderColor: '#dc2626' }}>
+              📤 Adaugă alt raport
+            </button>
+            <button className="btn btn-secondary" onClick={() => onNavigate('stock')}>
+              📦 Vezi stocul
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        <p className="page-title">Introdu vânzări</p>
+
+        {/* Doc type toggle */}
+        <div className="form-group">
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className="btn"
+              style={{
+                flex: 1,
+                background: 'var(--bg3)',
+                border: '1px solid var(--border2)',
+                color: 'var(--text2)',
+              }}
+              onClick={() => setDocType('intrare')}
+            >
+              <div>📥 Factură</div>
+              <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↑ intrare stoc</div>
+            </button>
+            <button
+              className="btn"
+              style={{
+                flex: 1,
+                background: 'rgba(224,92,92,0.15)',
+                border: '1px solid var(--red)',
+                color: 'var(--red)',
+              }}
+            >
+              <div>🛒 Vânzări</div>
+              <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↓ raport casă</div>
+            </button>
+          </div>
+        </div>
+
+        {/* Reference */}
+        <div className="form-group">
+          <label className="label">Referință raport (opțional)</label>
+          <input
+            className="input"
+            placeholder="ex: Raport casă ian 2026"
+            value={salesRef}
+            onChange={e => setSalesRef(e.target.value)}
+          />
+        </div>
+
+        {/* Product picker */}
+        <div className="card" style={{ marginBottom: 12 }}>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10, color: 'var(--text1)' }}>Adaugă produs</div>
+
+          <div className="form-group" style={{ marginBottom: 8 }}>
+            <input
+              className="input"
+              placeholder="🔍 Caută produs..."
+              value={salesSearch}
+              onChange={e => { setSalesSearch(e.target.value); setSalesProductId(''); }}
+            />
+          </div>
+
+          <div className="form-group" style={{ marginBottom: 8 }}>
+            <select
+              className="input"
+              value={salesProductId}
+              onChange={e => setSalesProductId(e.target.value)}
+            >
+              <option value="">— Selectează produs —</option>
+              {filteredProducts.map(p => (
+                <option key={p.id} value={p.id}>{p.name}{p.isCustom ? ' ★' : ''}</option>
+              ))}
+            </select>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg3)', border: '1px solid var(--border2)', borderRadius: 8, padding: '4px 8px' }}>
+              <button
+                style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text2)', lineHeight: 1, padding: '0 2px' }}
+                onClick={() => setSalesQty(q => Math.max(1, q - 1))}
+              >−</button>
+              <input
+                className="input"
+                type="number"
+                min="1"
+                value={salesQty}
+                onChange={e => setSalesQty(Math.max(1, parseInt(e.target.value) || 1))}
+                style={{ width: 52, textAlign: 'center', border: 'none', background: 'transparent', padding: '6px 0' }}
+              />
+              <button
+                style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text2)', lineHeight: 1, padding: '0 2px' }}
+                onClick={() => setSalesQty(q => q + 1)}
+              >+</button>
+            </div>
+            <button
+              className="btn btn-primary"
+              style={{ flex: 1, background: '#dc2626', borderColor: '#dc2626' }}
+              disabled={!salesProductId}
+              onClick={addSalesItem}
+            >
+              + Adaugă
+            </button>
+          </div>
+        </div>
+
+        {/* Items list */}
+        {salesItems.length > 0 ? (
+          <div className="card" style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text1)' }}>
+                Lista vânzări
+              </div>
+              <span className="badge badge-red">{salesItems.length} produs{salesItems.length !== 1 ? 'e' : ''}</span>
+            </div>
+            {salesItems.map(item => (
+              <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 0', borderBottom: '1px solid var(--border1)' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 500, fontSize: 13, color: 'var(--text1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {item.productName}
+                  </div>
+                </div>
+                {/* Quick +1 */}
+                <button
+                  onClick={() => incrementSalesItem(item.id)}
+                  style={{ background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 6, color: '#dc2626', fontWeight: 700, fontSize: 15, width: 30, height: 30, cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                >
+                  +1
+                </button>
+                {/* Qty input */}
+                <input
+                  className="input"
+                  type="number"
+                  min="1"
+                  value={item.cantitate}
+                  onChange={e => updateSalesCantitate(item.id, e.target.value)}
+                  style={{ width: 58, textAlign: 'center', flexShrink: 0 }}
+                />
+                {/* Remove */}
+                <button
+                  onClick={() => removeSalesItem(item.id)}
+                  style={{ background: 'none', border: 'none', fontSize: 16, cursor: 'pointer', color: '#dc2626', flexShrink: 0, padding: '0 2px' }}
+                >
+                  🗑
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state" style={{ marginBottom: 12 }}>
+            <div className="empty-state-icon">🛒</div>
+            <div className="empty-state-text">Nicio vânzare adăugată.<br/>Selectează un produs și apasă + Adaugă.</div>
+          </div>
+        )}
+
+        <button
+          className="btn btn-primary"
+          style={{ background: '#dc2626', borderColor: '#dc2626' }}
+          disabled={salesItems.length === 0}
+          onClick={saveSalesTransaction}
+        >
+          📤 Salvează vânzări ({salesItems.reduce((s, i) => s + i.cantitate, 0)} buc, {salesItems.length} produse)
+        </button>
+      </div>
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RENDER: "Adaugă factură" (intrare) — OCR flow, unchanged
+  // ══════════════════════════════════════════════════════════════════════════
   return (
     <div>
-      <p className="page-title">{isPLU ? 'Raport PLU — scădere stoc' : 'Adaugă factură — intrare stoc'}</p>
+      <p className="page-title">Adaugă factură — intrare stoc</p>
 
       {/* Step indicator */}
       <div className="steps" style={{ marginBottom: 24 }}>
@@ -268,11 +525,10 @@ export default function Upload({ onNavigate }) {
                 className="btn"
                 style={{
                   flex: 1,
-                  background: docType === 'intrare' ? 'rgba(76,175,125,0.15)' : 'var(--bg3)',
-                  border: `1px solid ${docType === 'intrare' ? 'var(--green)' : 'var(--border2)'}`,
-                  color: docType === 'intrare' ? 'var(--green)' : 'var(--text2)',
+                  background: 'rgba(76,175,125,0.15)',
+                  border: '1px solid var(--green)',
+                  color: 'var(--green)',
                 }}
-                onClick={() => setDocType('intrare')}
               >
                 <div>📥 Factură</div>
                 <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↑ crește stocul</div>
@@ -281,37 +537,30 @@ export default function Upload({ onNavigate }) {
                 className="btn"
                 style={{
                   flex: 1,
-                  background: docType === 'iesire' ? 'rgba(224,92,92,0.15)' : 'var(--bg3)',
-                  border: `1px solid ${docType === 'iesire' ? 'var(--red)' : 'var(--border2)'}`,
-                  color: docType === 'iesire' ? 'var(--red)' : 'var(--text2)',
+                  background: 'var(--bg3)',
+                  border: '1px solid var(--border2)',
+                  color: 'var(--text2)',
                 }}
                 onClick={() => setDocType('iesire')}
               >
-                <div>📤 Raport PLU</div>
-                <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↓ scade stocul</div>
+                <div>🛒 Vânzări</div>
+                <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↓ raport casă</div>
               </button>
             </div>
           </div>
 
-          {isPLU && (
-            <div style={{ background: 'rgba(224,92,92,0.08)', border: '1px solid rgba(224,92,92,0.35)', borderRadius: 8, padding: '10px 14px', marginBottom: 8, fontSize: 13, color: '#b91c1c' }}>
-              <strong>📤 Mod vânzări PLU</strong> — produsele selectate vor fi <strong>scăzute din stoc</strong>.
-              Toate produsele trebuie să existe deja în catalog.
-            </div>
-          )}
-
           <div className="form-group">
-            <label className="label">{isPLU ? 'Referință raport (opțional)' : 'Referință factură (opțional)'}</label>
+            <label className="label">Referință factură (opțional)</label>
             <input
               className="input"
-              placeholder={isPLU ? 'ex: PLU 15 ian / Z-raport 042' : 'ex: Factură #123 / Furnizor X'}
+              placeholder="ex: Factură #123 / Furnizor X"
               value={sursa}
               onChange={e => setSursa(e.target.value)}
             />
           </div>
 
           <div className="form-group">
-            <label className="label">{isPLU ? 'Imagine raport PLU' : 'Imagine factură'}</label>
+            <label className="label">Imagine factură</label>
             <div
               className={`upload-zone ${dragOver ? 'drag-over' : ''}`}
               onDragOver={e => { e.preventDefault(); setDragOver(true); }}
@@ -351,7 +600,6 @@ export default function Upload({ onNavigate }) {
               Poți face o poză sau selecta una din galerie
             </div>
 
-            {/* Camera input — forces camera on mobile */}
             <input
               ref={cameraRef}
               type="file"
@@ -360,7 +608,6 @@ export default function Upload({ onNavigate }) {
               style={{ display: 'none' }}
               onChange={e => { handleFile(e.target.files[0]); e.target.value = ''; }}
             />
-            {/* Gallery input — no capture, shows gallery/file picker */}
             <input
               ref={fileRef}
               type="file"
@@ -371,18 +618,14 @@ export default function Upload({ onNavigate }) {
           </div>
 
           {imageFile && (
-            <button
-              className="btn btn-primary"
-              style={isPLU ? { background: '#dc2626', borderColor: '#dc2626' } : {}}
-              onClick={startOCR}
-            >
+            <button className="btn btn-primary" onClick={startOCR}>
               🔍 Extrage text (OCR)
             </button>
           )}
 
           <div style={{ marginTop: 12 }}>
             <button className="btn btn-secondary" onClick={addManualItem}>
-              {isPLU ? '✏️ Adaugă vânzare manual' : '✏️ Introducere manuală (fără OCR)'}
+              ✏️ Introducere manuală (fără OCR)
             </button>
           </div>
 
@@ -408,26 +651,17 @@ export default function Upload({ onNavigate }) {
       {/* STEP 2: Review */}
       {step === 2 && (
         <>
-          {isPLU && (
-            <div style={{ background: 'rgba(220,38,38,0.06)', border: '1px solid rgba(220,38,38,0.3)', borderRadius: 8, padding: '8px 12px', marginBottom: 12, fontSize: 12, color: '#b91c1c', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ fontSize: 16 }}>📤</span>
-              <span><strong>Scădere stoc — PLU</strong> · Verifică fiecare produs înainte de a salva</span>
-            </div>
-          )}
-
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <div>
-              <span className={`badge ${isPLU ? 'badge-red' : 'badge-green'}`} style={{ marginRight: 6 }}>✓ {confirmedCount} {isPLU ? 'de scăzut' : 'OK'}</span>
+              <span className="badge badge-green" style={{ marginRight: 6 }}>✓ {confirmedCount} OK</span>
               {needsReviewCount > 0 && <span className="badge badge-yellow">⚠ {needsReviewCount} necesită verificare</span>}
             </div>
-            <button className="btn btn-secondary btn-sm" onClick={addManualItem}>{isPLU ? '+ Adaugă vânzare' : '+ Adaugă'}</button>
+            <button className="btn btn-secondary btn-sm" onClick={addManualItem}>+ Adaugă</button>
           </div>
 
           {needsReviewCount > 0 && (
             <div className="alert alert-warning">
-              {isPLU
-                ? '⚠️ Unele linii OCR nu corespund niciunui produs din catalog. Selectează produsul corect sau ignoră linia.'
-                : '⚠️ Unele produse nu au fost recunoscute automat. Completează datele pentru fiecare produs nou sau asociază-le la un produs existent.'}
+              ⚠️ Unele produse nu au fost recunoscute automat. Completează datele pentru fiecare produs nou sau asociază-le la un produs existent.
             </div>
           )}
 
@@ -436,62 +670,13 @@ export default function Upload({ onNavigate }) {
             const canConfirm = (item._newName || '').trim().length > 0;
 
             if (isNewProduct) {
-              if (isPLU) {
-                // PLU mode: product MUST already exist — no catalog creation, only selection
-                return (
-                  <div key={item._idx} style={{ border: '2px solid #dc2626', borderRadius: 10, padding: 14, marginBottom: 10, background: 'rgba(220,38,38,0.05)' }}>
-                    <div style={{ fontWeight: 700, color: '#dc2626', marginBottom: 4, fontSize: 15 }}>
-                      ❌ PRODUS NECUNOSCUT
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 4 }}>
-                      Text din raport PLU: <em>„{item.rawName}”</em>
-                    </div>
-                    <div style={{ fontSize: 12, color: '#b91c1c', marginBottom: 12 }}>
-                      Produsul nu există în catalog. Selectează cel mai apropiat produs pentru a scădea stocul, sau ignoră această linie.
-                    </div>
-
-                    <div className="form-group">
-                      <label className="label">Selectează produsul din catalog</label>
-                      <select
-                        className="input"
-                        value={item._productId || ''}
-                        onChange={e => assignProduct(item._idx, e.target.value)}
-                      >
-                        <option value="">— Alege produsul corespunzător —</option>
-                        {allProducts.map(p => (
-                          <option key={p.id} value={p.id}>{p.name}{p.isCustom ? ' ★' : ''}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginTop: 4 }}>
-                      <div className="form-group" style={{ width: 80, margin: 0 }}>
-                        <label className="label">Cantitate</label>
-                        <input
-                          className="input"
-                          type="number"
-                          min="1"
-                          value={item.quantity}
-                          onChange={e => updateItem(item._idx, 'quantity', parseInt(e.target.value) || 1)}
-                        />
-                      </div>
-                      <div style={{ flex: 1 }} />
-                      <button className="btn btn-secondary btn-sm" onClick={() => removeItem(item._idx)}>
-                        🚫 Ignoră linia
-                      </button>
-                    </div>
-                  </div>
-                );
-              }
-
-              // Invoice mode: new product can be added to catalog
               return (
                 <div key={item._idx} style={{ border: '2px solid #f59e0b', borderRadius: 10, padding: 14, marginBottom: 10, background: 'rgba(245,158,11,0.06)' }}>
                   <div style={{ fontWeight: 700, color: '#b45309', marginBottom: 4, fontSize: 15 }}>
                     ⚠️ ATENȚIE — PRODUS NOU DETECTAT!
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12 }}>
-                  Text detectat din factură: <em>„{item.rawName}”</em>
+                    Text detectat din factură: <em>„{item.rawName}"</em>
                   </div>
 
                   <div className="form-group">
@@ -549,11 +734,10 @@ export default function Upload({ onNavigate }) {
                   </details>
                 </div>
               );
-            } // end isNewProduct
+            }
 
             return (
               <div key={item._idx} className={`review-item ${item._confirmed ? 'confirmed' : ''}`}>
-                {/* T1: line number */}
                 {item.lineNumber != null && (
                   <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>
                     Linie factură: #{item.lineNumber}
@@ -580,7 +764,6 @@ export default function Upload({ onNavigate }) {
                   </span>
                 </div>
 
-                {/* Human Confirmation Layer: 3 action buttons for ambiguous unconfirmed items */}
                 {item.needsReview && item._productId && !item._confirmed && !editModeItems.has(item._idx) ? (
                   <div style={{ marginTop: 8, marginBottom: 8 }}>
                     <div style={{ fontSize: 12, color: '#92400e', marginBottom: 6, background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: 6, padding: '6px 10px' }}>
@@ -611,7 +794,6 @@ export default function Upload({ onNavigate }) {
                     </div>
                   </div>
                 ) : (
-                  /* Edit dropdown — shown for non-ambiguous items OR when edit mode is toggled */
                   <div className="form-group">
                     {editModeItems.has(item._idx) && (
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
@@ -652,33 +834,24 @@ export default function Upload({ onNavigate }) {
                   </div>
                   <button className="btn btn-danger btn-sm" onClick={() => removeItem(item._idx)}>🗑</button>
                 </div>
-
-                {item._productId && isPLU && (
-                  <div style={{ marginTop: 8, fontSize: 12, color: '#dc2626' }}>↓ se scade din stoc</div>
-                )}
               </div>
             );
           })}
 
           {parsedItems.length === 0 && (
             <div className="empty-state">
-              <div className="empty-state-icon">{isPLU ? '📤' : '📋'}</div>
-              <div className="empty-state-text">
-                {isPLU ? 'Nicio vânzare detectată.' : 'Nicio linie detectată.'}<br/>
-                {isPLU ? 'Adaugă manual produsele vândute.' : 'Adaugă manual produsele.'}
-              </div>
+              <div className="empty-state-icon">📋</div>
+              <div className="empty-state-text">Nicio linie detectată.<br/>Adaugă manual produsele.</div>
             </div>
           )}
 
           <button
             className="btn btn-primary"
-            style={{ marginTop: 16, ...(isPLU ? { background: '#dc2626', borderColor: '#dc2626' } : {}) }}
+            style={{ marginTop: 16 }}
             onClick={saveTransaction}
             disabled={confirmedCount === 0}
           >
-            {isPLU
-              ? `📤 Înregistrează scădere stoc (${confirmedCount} produse)`
-              : `💾 Salvează intrare stoc (${confirmedCount} produse)`}
+            💾 Salvează intrare stoc ({confirmedCount} produse)
           </button>
 
           <button className="btn btn-secondary" style={{ marginTop: 8 }} onClick={() => setStep(0)}>
@@ -702,12 +875,10 @@ export default function Upload({ onNavigate }) {
           <div style={{ fontSize: 56, marginBottom: 16 }}>✅</div>
           <div style={{ fontFamily: 'DM Serif Display, serif', fontSize: 22, marginBottom: 8 }}>Salvat cu succes!</div>
           <div style={{ color: 'var(--text3)', fontSize: 14, marginBottom: 32 }}>
-            {isPLU
-              ? <>{confirmedCount} produse au fost <strong style={{ color: '#dc2626' }}>scăzute din stoc</strong> (vânzare PLU).</>
-              : <>{confirmedCount} produse au fost <strong style={{ color: 'var(--green)' }}>adăugate în stoc</strong> (factură).</>}
+            {confirmedCount} produse au fost <strong style={{ color: 'var(--green)' }}>adăugate în stoc</strong> (factură).
           </div>
-          <button className="btn btn-primary" onClick={reset} style={{ marginBottom: 10, ...(isPLU ? { background: '#dc2626', borderColor: '#dc2626' } : {}) }}>
-            {isPLU ? '📤 Adaugă alt raport PLU' : '📥 Adaugă altă factură'}
+          <button className="btn btn-primary" onClick={reset} style={{ marginBottom: 10 }}>
+            📥 Adaugă altă factură
           </button>
           <button className="btn btn-secondary" onClick={() => onNavigate('stock')}>
             📦 Vezi stocul
