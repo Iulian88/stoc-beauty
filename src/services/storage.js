@@ -4,6 +4,7 @@ const KEYS = {
   TRANSACTIONS: 'stoc_tranzactii',
   Z_REPORTS: 'stoc_z_rapoarte',
   CUSTOM_PRODUCTS: 'stoc_produse_custom',
+  LEARNED_ALIASES: 'stoc_learned_aliases',
 };
 
 export const storage = {
@@ -148,6 +149,38 @@ export const storage = {
     localStorage.setItem(KEYS.CUSTOM_PRODUCTS, JSON.stringify(all));
     syncUpsert('produse_custom', prod);
     return prod;
+  },
+
+  getLearnedAliases() {
+    try { return JSON.parse(localStorage.getItem(KEYS.LEARNED_ALIASES) || '{}'); }
+    catch { return {}; }
+  },
+
+  addAliasToProduct(productId, alias) {
+    const cleanAlias = (alias || '').trim().toLowerCase();
+    if (!cleanAlias) return;
+
+    // 1. Update learned aliases map (works for both static and custom products)
+    const learned = this.getLearnedAliases();
+    const key = String(productId);
+    const existing = (learned[key] || []).map(a => a.toLowerCase());
+    if (!existing.includes(cleanAlias)) {
+      learned[key] = [...(learned[key] || []), cleanAlias];
+      localStorage.setItem(KEYS.LEARNED_ALIASES, JSON.stringify(learned));
+    }
+
+    // 2. Also update custom product's aliases array (if it's a custom product)
+    const all = this.getCustomProducts();
+    const idx = all.findIndex(p => p.id === productId);
+    if (idx >= 0) {
+      const prod = all[idx];
+      const aliases = (prod.aliases || []).map(a => a.toLowerCase());
+      if (!aliases.includes(cleanAlias)) {
+        all[idx] = { ...prod, aliases: [...(prod.aliases || []), cleanAlias] };
+        localStorage.setItem(KEYS.CUSTOM_PRODUCTS, JSON.stringify(all));
+        syncUpsert('produse_custom', all[idx]);
+      }
+    }
   },
 
   exportJSON() {

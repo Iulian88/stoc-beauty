@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { runClaudeOCR, cleanupWorker } from '../services/ocr';
+import { runClaudeOCR, cleanupWorker, cleanProductName } from '../services/ocr';
 import { storage } from '../services/storage';
 import { PRODUCTS } from '../data/products';
 import { useStock } from '../context/StockContext';
@@ -25,6 +25,7 @@ export default function Upload({ onNavigate }) {
   const [parsedItems, setParsedItems] = useState([]);
   const [dragOver, setDragOver] = useState(false);
   const [customProducts, setCustomProducts] = useState(() => storage.getCustomProducts());
+  const [editModeItems, setEditModeItems] = useState(new Set());
   const fileRef = useRef();
   const cameraRef = useRef();
 
@@ -72,7 +73,26 @@ export default function Upload({ onNavigate }) {
       }
       return item;
     });
-    setParsedItems(remapped.map((item, idx) => ({
+
+    // Al treilea pass: potrivire cu alias-uri învățate de utilizator
+    const learnedAliases = storage.getLearnedAliases();
+    const allProds = [...PRODUCTS, ...customProds];
+    const remapped2 = remapped.map(item => {
+      if (item.suggestedProductId && !item.needsReview) return item;
+      const normInput = cleanProductName(item.rawName).toLowerCase();
+      for (const [prodIdStr, aliases] of Object.entries(learnedAliases)) {
+        const hit = aliases.find(a => normInput.includes(a) || a.includes(normInput));
+        if (hit) {
+          const prod = allProds.find(p => p.id === Number(prodIdStr));
+          if (prod) {
+            console.log('[LEARNED ALIAS MATCH]', { ocr: item.rawName, matched: prod.name, alias: hit });
+            return { ...item, suggestedProductId: prod.id, suggestedProductName: prod.name, needsReview: false };
+          }
+        }
+      }
+      return item;
+    });
+    setParsedItems(remapped2.map((item, idx) => ({
       ...item,
       _idx: idx,
       _productId: item.suggestedProductId,
@@ -102,10 +122,37 @@ export default function Upload({ onNavigate }) {
         _confirmed: true,
       } : item
     ));
+    // Exit edit mode once a product is selected
+    setEditModeItems(prev => { const next = new Set(prev); next.delete(idx); return next; });
   }
 
   function removeItem(idx) {
     setParsedItems(prev => prev.filter(item => item._idx !== idx));
+  }
+
+  function acceptMatch(idx) {
+    setParsedItems(prev => prev.map(item =>
+      item._idx === idx ? { ...item, _confirmed: true, needsReview: false } : item
+    ));
+  }
+
+  function acceptAndLearn(idx) {
+    const item = parsedItems.find(i => i._idx === idx);
+    if (!item || !item._productId) return;
+    const nameToLearn = cleanProductName(item.rawName);
+    storage.addAliasToProduct(item._productId, nameToLearn);
+    console.log('[LEARN]', { product: item._productName, alias: nameToLearn });
+    setParsedItems(prev => prev.map(i =>
+      i._idx === idx ? { ...i, _confirmed: true, needsReview: false } : i
+    ));
+  }
+
+  function toggleEditMode(idx) {
+    setEditModeItems(prev => {
+      const next = new Set(prev);
+      next.has(idx) ? next.delete(idx) : next.add(idx);
+      return next;
+    });
   }
 
   function addManualItem() {
@@ -523,29 +570,73 @@ export default function Upload({ onNavigate }) {
                     fontSize: 11,
                     padding: '2px 7px',
                     borderRadius: 10,
-                    background: !item._productId ? '#fee2e2' : item.needsReview ? '#fef3c7' : '#dcfce7',
-                    color: !item._productId ? '#b91c1c' : item.needsReview ? '#92400e' : '#166534',
+                    background: !item._productId ? '#fee2e2' : item.needsReview && !item._confirmed ? '#fef3c7' : '#dcfce7',
+                    color: !item._productId ? '#b91c1c' : item.needsReview && !item._confirmed ? '#92400e' : '#166534',
                     whiteSpace: 'nowrap',
                     marginLeft: 8,
                     flexShrink: 0,
                   }}>
-                    {!item._productId ? '⚪ Neselectat' : item.needsReview ? '🟡 Manual' : '🟢 Auto'}
+                    {!item._productId ? '⚪ Neselectat' : item.needsReview && !item._confirmed ? '🟡 Ambiguu' : '🟢 Confirmat'}
                   </span>
                 </div>
 
-                <div className="form-group">
-                  <label className="label">Produs</label>
-                  <select
-                    className="input"
-                    value={item._productId || ''}
-                    onChange={e => assignProduct(item._idx, e.target.value)}
-                  >
-                    <option value="">— Selectează produs —</option>
-                    {allProducts.map(p => (
-                      <option key={p.id} value={p.id}>{p.name}{p.isCustom ? ' ★' : ''}</option>
-                    ))}
-                  </select>
-                </div>
+                {/* Human Confirmation Layer: 3 action buttons for ambiguous unconfirmed items */}
+                {item.needsReview && item._productId && !item._confirmed && !editModeItems.has(item._idx) ? (
+                  <div style={{ marginTop: 8, marginBottom: 8 }}>
+                    <div style={{ fontSize: 12, color: '#92400e', marginBottom: 6, background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: 6, padding: '6px 10px' }}>
+                      ⚠ Match ambiguu — confirmă sau editează manual
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button
+                        className="btn btn-sm"
+                        style={{ flex: 1, background: '#dcfce7', color: '#166534', border: '1px solid #86efac', borderRadius: 6, fontSize: 12, padding: '6px 4px' }}
+                        onClick={() => acceptMatch(item._idx)}
+                      >
+                        ✓ Confirmă
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        style={{ flex: 1.6, background: '#dbeafe', color: '#1e40af', border: '1px solid #93c5fd', borderRadius: 6, fontSize: 12, padding: '6px 4px' }}
+                        onClick={() => acceptAndLearn(item._idx)}
+                      >
+                        ✓ Confirmă + Învață
+                      </button>
+                      <button
+                        className="btn btn-sm"
+                        style={{ background: 'var(--bg3)', color: 'var(--text2)', border: '1px solid var(--border2)', borderRadius: 6, fontSize: 12, padding: '6px 8px' }}
+                        onClick={() => toggleEditMode(item._idx)}
+                      >
+                        ✏ Editare
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Edit dropdown — shown for non-ambiguous items OR when edit mode is toggled */
+                  <div className="form-group">
+                    {editModeItems.has(item._idx) && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                        <label className="label" style={{ margin: 0 }}>Alege produsul</label>
+                        <button
+                          style={{ background: 'none', border: 'none', fontSize: 12, color: 'var(--text3)', cursor: 'pointer', padding: 0 }}
+                          onClick={() => toggleEditMode(item._idx)}
+                        >
+                          ← Înapoi
+                        </button>
+                      </div>
+                    )}
+                    {!editModeItems.has(item._idx) && <label className="label">Produs</label>}
+                    <select
+                      className="input"
+                      value={item._productId || ''}
+                      onChange={e => assignProduct(item._idx, e.target.value)}
+                    >
+                      <option value="">— Selectează produs —</option>
+                      {allProducts.map(p => (
+                        <option key={p.id} value={p.id}>{p.name}{p.isCustom ? ' ★' : ''}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 <div className="review-controls">
                   <div style={{ flex: 1 }}>
@@ -564,9 +655,6 @@ export default function Upload({ onNavigate }) {
 
                 {item._productId && isPLU && (
                   <div style={{ marginTop: 8, fontSize: 12, color: '#dc2626' }}>↓ se scade din stoc</div>
-                )}
-                {item._productId && !isPLU && item.needsReview && (
-                  <div style={{ marginTop: 8, fontSize: 11, color: '#b45309' }}>⚠ verificare produs necesară (match ambiguu)</div>
                 )}
               </div>
             );
