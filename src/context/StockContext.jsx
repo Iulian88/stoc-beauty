@@ -13,6 +13,8 @@ export function StockProvider({ children }) {
 
   // On first mount: pull cloud data → hydrate localStorage → refresh UI
   useEffect(() => {
+    // Migration: back-fill missing pretVanzare snapshots on old transactions (runs once)
+    storage.migrateOldTransactions([...PRODUCTS, ...storage.getCustomProducts()]);
     hydrateFromSupabase().then(ok => { if (ok) refresh(); });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

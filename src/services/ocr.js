@@ -1,4 +1,4 @@
-import { matchProduct, findProduct } from '../data/products.js';
+import { matchProduct } from '../data/products.js';
 
 const MAX_OCR_WIDTH = 1500;
 
@@ -91,10 +91,10 @@ export async function runClaudeOCR(imageFile, onProgress) {
             productId: product.id,
             productName: product.name,
             cantitate: item.cantitate || 1,
-            pretAchizitie: item.pret ?? product.pretAchizitie,
+            pretAchizitie: item.pret ?? null,           // null if absent from invoice → forces manual review
             pretAchizitieOcr: item.pret || null,
-            pretAchiziitieCatalog: product.pretAchizitie,
-            pretVanzare: product.pretVanzare,
+            pretAchiziitieCatalog: product.pretAchizitie, // reference display only — NOT used for financials
+            pretVanzare: product.pretVanzare,             // snapshot of selling price at import time
             totalOcr: item.total_pret || null,
             sourceOcr: item.source || null,
             priceMismatch: item.price_mismatch || false,

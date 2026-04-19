@@ -14,10 +14,8 @@ export default function Dashboard({ onNavigate }) {
   const okStoc = stockItems.filter(s => s.stoc > 0).length;
   const lowStock = stockItems.filter(s => s.stoc > 0 && s.stoc <= LOW_STOCK_THRESHOLD);
 
-  // Total stoc value
-  const valoareStoc = stockItems.reduce((acc, s) => {
-    return acc + (s.stoc > 0 ? s.stoc * s.product.pretAchizitie : 0);
-  }, 0);
+  // Stock value computed from historical transaction purchase prices (not catalog)
+  const valoareStoc = storage.computeWeightedStockValue(stock);
 
   const profit = storage.computeProfitBrut(); // kept for backward compat
   const fin = storage.computeFinancials();

@@ -606,13 +606,17 @@ export default function Upload({ onNavigate }) {
                       ? <><span style={{ color: '#dc2626' }}>↓ se scade din stoc</span> · Preț vânzare: {item.pretVanzare} RON</>
                       : (
                         <>
-                          {item.pretAchizitieOcr != null && item.pretAchiziitieCatalog != null && item.pretAchizitieOcr !== item.pretAchiziitieCatalog ? (
+                          {item.pretAchizitieOcr != null ? (
                             <span style={{ display: 'block' }}>
-                              <span style={{ color: '#16a34a', fontWeight: 600 }}>Preț achiziție: {item.pretAchizitieOcr} RON / buc</span>
-                              <span style={{ color: '#9ca3af', marginLeft: 8 }}>(catalog: {item.pretAchiziitieCatalog} RON)</span>
+                              <span style={{ color: '#16a34a', fontWeight: 600 }}>Preț achiziție (factură): {item.pretAchizitieOcr} RON / buc</span>
+                              {item.pretAchiziitieCatalog != null && (
+                                <span style={{ color: '#9ca3af', marginLeft: 8, fontSize: 11 }}>(referință catalog: {item.pretAchiziitieCatalog} RON)</span>
+                              )}
                             </span>
+                          ) : item.pretAchizitie != null ? (
+                            <span style={{ display: 'block' }}>Preț achiziție: {item.pretAchizitie} RON / buc</span>
                           ) : (
-                            <span style={{ display: 'block' }}>Preț achiziție: {item.pretAchizitie != null ? item.pretAchizitie : '—'} RON / buc</span>
+                            <span style={{ display: 'block', color: '#b91c1c', fontSize: 11 }}>⚠ Preț achiziție lipsă — completează manual</span>
                           )}
                           {item.totalOcr != null && (
                             <span style={{ display: 'block' }}>

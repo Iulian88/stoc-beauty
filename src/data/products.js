@@ -1,3 +1,7 @@
+// CATALOG — defines SELLING PRICES (pretVanzare) only.
+// pretAchizitie is kept here as a reference/fallback ONLY.
+// DO NOT use product.pretAchizitie in financial calculations.
+// All cost calculations MUST use item.pretAchizitie from the saved transaction.
 export const PRODUCTS = [
   { id: 1, name: "Color Radiance Conditioner 1000ml", aliases: ["color radiance conditioner 1000", "cond color radiance 1000"], pretAchizitie: 113.74, pretVanzare: 73.93 },
   { id: 2, name: "Color Radiance Conditioner Spray 250ml", aliases: ["color radiance conditioner spray", "cond spray color radiance"], pretAchizitie: 67.67, pretVanzare: 44.04 },

@@ -295,5 +295,75 @@ export const storage = {
       marja:           parseFloat(marja.toFixed(1)),
       fluxNet:         parseFloat(fluxNet.toFixed(2)),
     };
-  }
+  },
+
+  // Stock value using weighted average purchase cost from TRANSACTION history.
+  // This replaces the old approach of using product.pretAchizitie (catalog).
+  // stockMap = result of computeStock(): { [productId]: { product, stoc, ... } }
+  computeWeightedStockValue(stockMap) {
+    const transactions = this.getTransactions()
+      .filter(t => !t._stornat && !t._stornare && t.tip === 'intrare');
+
+    // Build weighted average purchase cost per product from all purchase transactions
+    const costBasis = {}; // productId → { totalCost, totalQty }
+    transactions.forEach(t => {
+      t.items?.forEach(item => {
+        if (!item.productId || !item.pretAchizitie) return;
+        if (!costBasis[item.productId]) costBasis[item.productId] = { totalCost: 0, totalQty: 0 };
+        costBasis[item.productId].totalCost += (item.pretAchizitie || 0) * (item.cantitate || 0);
+        costBasis[item.productId].totalQty += item.cantitate || 0;
+      });
+    });
+
+    let total = 0;
+    Object.entries(stockMap).forEach(([id, s]) => {
+      if (s.stoc <= 0) return;
+      const cb = costBasis[id] || costBasis[Number(id)];
+      if (cb && cb.totalQty > 0) {
+        const avgCost = cb.totalCost / cb.totalQty;
+        total += s.stoc * avgCost;
+      } else {
+        // No purchase history with invoice price → fall back to catalog (reference only)
+        total += s.stoc * (s.product.pretAchizitie || 0);
+      }
+    });
+
+    return parseFloat(total.toFixed(2));
+  },
+
+  // Migration: run ONCE at app start to back-fill missing pretVanzare snapshots
+  // on old transactions saved before the architecture refactor.
+  // allProducts = [...PRODUCTS, ...getCustomProducts()]
+  migrateOldTransactions(allProducts) {
+    const all = this.getTransactions();
+    const productMap = {};
+    (allProducts || []).forEach(p => { productMap[p.id] = p; });
+
+    const toSync = [];
+    let anyChanged = false;
+
+    const migrated = all.map(t => {
+      if (!Array.isArray(t.items)) return t;
+      let tChanged = false;
+      const newItems = t.items.map(item => {
+        // Only patch pretVanzare — pretAchizitie is left as-is (null is intentional per Step 1)
+        if (item.pretVanzare != null) return item;
+        const product = productMap[item.productId];
+        if (!product) return item;
+        tChanged = true;
+        return { ...item, pretVanzare: product.pretVanzare ?? 0 };
+      });
+      if (!tChanged) return t;
+      anyChanged = true;
+      const migratedT = { ...t, items: newItems };
+      toSync.push(migratedT);
+      return migratedT;
+    });
+
+    if (anyChanged) {
+      localStorage.setItem(KEYS.TRANSACTIONS, JSON.stringify(migrated));
+      // Sync patched transactions to Supabase (fire-and-forget)
+      toSync.forEach(t => syncUpsert('tranzactii', t));
+    }
+  },
 };
