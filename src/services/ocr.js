@@ -85,59 +85,31 @@ export async function runClaudeOCR(imageFile, onProgress) {
     onProgress?.(`✓ ${count} produs${count !== 1 ? 'e' : ''} extras${count !== 1 ? 'e' : ''}!`);
     const results = [];
     for (const item of (items || [])) {
-      const _mismatch = item.price_mismatch || false;
       console.log('[OCR LINE]', {
         line: item.line_number ?? null,
         name: item.nume,
         qty: item.cantitate,
         unit: item.pret,
         total: item.total_pret,
-        mismatch: _mismatch,
+        mismatch: item.price_mismatch || false,
       });
       const cleanedName = cleanProductName(item.nume);
       if (cleanedName !== item.nume) {
         console.log('[OCR CLEAN]', { original: item.nume, cleaned: cleanedName });
       }
       const match = matchProduct(cleanedName);
-      if (match) {
-        const { product, needsReview: matchNeedsReview } = match;
-        const existing = results.find(r => r.productId === product.id);
-        if (existing) {
-          existing.cantitate += item.cantitate || 1;
-        } else {
-          results.push({
-            productId: product.id,
-            productName: product.name,
-            cantitate: item.cantitate || 1,
-            pretAchizitie: item.pret ?? null,           // null if absent from invoice → forces manual review
-            pretAchizitieOcr: item.pret || null,
-            pretAchiziitieCatalog: product.pretAchizitie, // reference display only — NOT used for financials
-            pretVanzare: product.pretVanzare,             // snapshot of selling price at import time
-            totalOcr: item.total_pret || null,
-            sourceOcr: item.source || null,
-            priceMismatch: item.price_mismatch || false,
-            lineNumber: item.line_number ?? null,
-            rawLine: item.nume,
-            confidence: 'auto',
-            needsReview: matchNeedsReview || false,
-          });
-        }
-      } else {
-        results.push({
-          productId: null,
-          productName: null,
-          cantitate: item.cantitate || 1,
-          pretAchizitie: item.pret || null,
-          pretAchizitieOcr: item.pret || null,
-          totalOcr: item.total_pret || null,
-          sourceOcr: item.source || null,
-          priceMismatch: item.price_mismatch || false,
-          lineNumber: item.line_number ?? null,
-          rawLine: item.nume,
-          confidence: 'manual',
-          needsReview: true,
-        });
-      }
+      const matchNeedsReview = match ? match.needsReview : true;
+      results.push({
+        lineNumber: item.line_number ?? null,
+        rawName: item.nume,
+        quantity: item.cantitate || 1,
+        unitPrice: item.pret ?? null,
+        total: item.total_pret ?? null,
+        priceMismatch: item.price_mismatch || false,
+        suggestedProductId: match ? match.product.id : null,
+        suggestedProductName: match ? match.product.name : null,
+        needsReview: matchNeedsReview,
+      });
     }
     return { success: true, items: results, factura: factura ?? null };
   } catch (error) {

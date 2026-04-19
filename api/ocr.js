@@ -143,7 +143,7 @@ export default async function handler(req, res) {
         },
         body: JSON.stringify({
           model,
-          max_tokens: 4096,
+          max_tokens: 8192,
           messages: [
             {
               role: 'user',
@@ -266,6 +266,7 @@ export default async function handler(req, res) {
 
     const rawLines = Array.isArray(parsed.lines) ? parsed.lines
       : Array.isArray(parsed.items) ? parsed.items : [];
+    console.log('[OCR RAW COUNT]', rawLines.length);
 
     const items = rawLines
       // Accept item if name or raw contains something useful

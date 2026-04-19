@@ -63,20 +63,22 @@ export default function Upload({ onNavigate }) {
     // Al doilea pass: potrivire cu produse custom salvate
     const customProds = storage.getCustomProducts();
     const remapped = result.items.map(item => {
-      if (item.productId) return item;
+      if (item.suggestedProductId) return item;
       const match = customProds.find(cp =>
-        item.rawLine.toLowerCase().includes(cp.name.toLowerCase())
+        item.rawName.toLowerCase().includes(cp.name.toLowerCase())
       );
       if (match) {
-        return { ...item, productId: match.id, productName: match.name, pretAchizitie: match.pretAchizitie, pretVanzare: match.pretVanzare, needsReview: false };
+        return { ...item, suggestedProductId: match.id, suggestedProductName: match.name, needsReview: false };
       }
       return item;
     });
     setParsedItems(remapped.map((item, idx) => ({
       ...item,
       _idx: idx,
+      _productId: item.suggestedProductId,
+      _productName: item.suggestedProductName,
       _confirmed: !item.needsReview,
-      _newName: item.needsReview ? item.rawLine : undefined,
+      _newName: item.needsReview ? item.rawName : undefined,
       _newPretAchizitie: '',
       _newPretVanzare: '',
     })));
@@ -96,12 +98,8 @@ export default function Upload({ onNavigate }) {
     setParsedItems(prev => prev.map(item =>
       item._idx === idx ? {
         ...item,
-        productId: prod.id,
-        productName: prod.name,
-        pretAchizitie: item.pretAchizitieOcr ?? prod.pretAchizitie,
-        pretAchizitieOcr: item.pretAchizitieOcr ?? null,
-        pretAchiziitieCatalog: prod.pretAchizitie,
-        pretVanzare: prod.pretVanzare,
+        _productId: prod.id,
+        _productName: prod.name,
         needsReview: false,
         _confirmed: true,
       } : item
@@ -116,10 +114,16 @@ export default function Upload({ onNavigate }) {
     const newIdx = Date.now();
     setParsedItems(prev => [...prev, {
       _idx: newIdx,
-      productId: null,
-      productName: null,
-      cantitate: 1,
-      rawLine: '(adăugat manual)',
+      lineNumber: null,
+      rawName: '(adăugat manual)',
+      quantity: 1,
+      unitPrice: null,
+      total: null,
+      priceMismatch: false,
+      suggestedProductId: null,
+      suggestedProductName: null,
+      _productId: null,
+      _productName: null,
       needsReview: true,
       _confirmed: false,
       _newName: '',
@@ -147,10 +151,8 @@ export default function Upload({ onNavigate }) {
     setParsedItems(prev => prev.map(i =>
       i._idx === idx ? {
         ...i,
-        productId: newProd.id,
-        productName: newProd.name,
-        pretAchizitie: newProd.pretAchizitie,
-        pretVanzare: newProd.pretVanzare,
+        _productId: newProd.id,
+        _productName: newProd.name,
         needsReview: false,
         _confirmed: true,
       } : i
@@ -158,7 +160,7 @@ export default function Upload({ onNavigate }) {
   }
 
   function saveTransaction() {
-    const validItems = parsedItems.filter(item => item.productId && item._confirmed);
+    const validItems = parsedItems.filter(item => item._productId && item._confirmed);
     if (validItems.length === 0) return;
 
     storage.saveTransaction({
@@ -166,11 +168,10 @@ export default function Upload({ onNavigate }) {
       sursa: sursa || (docType === 'intrare' ? 'Factură' : 'Raport PLU'),
       factura: facturaData ?? undefined,
       items: validItems.map(item => ({
-        productId: item.productId,
-        productName: item.productName,
-        cantitate: Number(item.cantitate),
-        pretAchizitie: item.pretAchizitie,
-        pretVanzare: item.pretVanzare,
+        productId: item._productId,
+        productName: item._productName,
+        cantitate: Number(item.quantity),
+        pretAchizitie: item.unitPrice,
       })),
       rawOCR: rawText.replace(/[<>]/g, ''),
     });
@@ -190,8 +191,8 @@ export default function Upload({ onNavigate }) {
     setParsedItems([]);
   }
 
-  const confirmedCount = parsedItems.filter(i => i._confirmed && i.productId).length;
-  const needsReviewCount = parsedItems.filter(i => (i.needsReview || !i.productId) && !i._confirmed).length;
+  const confirmedCount = parsedItems.filter(i => i._confirmed && i._productId).length;
+  const needsReviewCount = parsedItems.filter(i => (i.needsReview || !i._productId) && !i._confirmed).length;
   const allProducts = [...PRODUCTS, ...customProducts];
   const isPLU = docType === 'iesire';
 
@@ -205,10 +206,10 @@ export default function Upload({ onNavigate }) {
 
   // T3: client-side mismatch flag (recompute in case backend skipped it)
   function hasMismatch(item) {
-    if (item.pretAchizitieOcr != null && item.cantitate > 0 && item.totalOcr != null) {
-      const expected = Math.round(item.pretAchizitieOcr * item.cantitate * 100) / 100;
+    if (item.unitPrice != null && item.quantity > 0 && item.total != null) {
+      const expected = Math.round(item.unitPrice * item.quantity * 100) / 100;
       const tolerance = Math.max(0.05, expected * 0.01);
-      return Math.abs(expected - item.totalOcr) > tolerance;
+      return Math.abs(expected - item.total) > tolerance;
     }
     return item.priceMismatch || false;
   }
@@ -404,7 +405,7 @@ export default function Upload({ onNavigate }) {
           )}
 
           {sortedItems.map(item => {
-            const isNewProduct = item.needsReview && !item.productId;
+            const isNewProduct = item.needsReview && !item._productId;
             const canConfirm = (item._newName || '').trim().length > 0 && parseFloat(item._newPretAchizitie) > 0;
 
             if (isNewProduct) {
@@ -416,7 +417,7 @@ export default function Upload({ onNavigate }) {
                       ❌ PRODUS NECUNOSCUT
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 4 }}>
-                      Text din raport PLU: <em>„{item.rawLine}"</em>
+                      Text din raport PLU: <em>„{item.rawName}”</em>
                     </div>
                     <div style={{ fontSize: 12, color: '#b91c1c', marginBottom: 12 }}>
                       Produsul nu există în catalog. Selectează cel mai apropiat produs pentru a scădea stocul, sau ignoră această linie.
@@ -426,7 +427,7 @@ export default function Upload({ onNavigate }) {
                       <label className="label">Selectează produsul din catalog</label>
                       <select
                         className="input"
-                        value={item.productId || ''}
+                        value={item._productId || ''}
                         onChange={e => assignProduct(item._idx, e.target.value)}
                       >
                         <option value="">— Alege produsul corespunzător —</option>
@@ -443,8 +444,8 @@ export default function Upload({ onNavigate }) {
                           className="input"
                           type="number"
                           min="1"
-                          value={item.cantitate}
-                          onChange={e => updateItem(item._idx, 'cantitate', parseInt(e.target.value) || 1)}
+                          value={item.quantity}
+                          onChange={e => updateItem(item._idx, 'quantity', parseInt(e.target.value) || 1)}
                         />
                       </div>
                       <div style={{ flex: 1 }} />
@@ -463,7 +464,7 @@ export default function Upload({ onNavigate }) {
                     ⚠️ ATENȚIE — PRODUS NOU DETECTAT!
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12 }}>
-                    Text detectat din factură: <em>„{item.rawLine}"</em>
+                  Text detectat din factură: <em>„{item.rawName}”</em>
                   </div>
 
                   <div className="form-group">
@@ -507,8 +508,8 @@ export default function Upload({ onNavigate }) {
                         className="input"
                         type="number"
                         min="1"
-                        value={item.cantitate}
-                        onChange={e => updateItem(item._idx, 'cantitate', parseInt(e.target.value) || 1)}
+                        value={item.quantity}
+                        onChange={e => updateItem(item._idx, 'quantity', parseInt(e.target.value) || 1)}
                       />
                     </div>
                   </div>
@@ -556,18 +557,23 @@ export default function Upload({ onNavigate }) {
                   </div>
                 )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
-                  <div className="review-raw" style={{ margin: 0 }}>OCR: {item.rawLine}</div>
+                  <div>
+                    <div className="review-raw" style={{ margin: 0 }}>OCR: {item.rawName}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>
+                      Sugestie: <strong>{item.suggestedProductName || '—'}</strong>
+                    </div>
+                  </div>
                   <span style={{
                     fontSize: 11,
                     padding: '2px 7px',
                     borderRadius: 10,
-                    background: !item.productId ? '#fee2e2' : item.needsReview ? '#fef3c7' : '#dcfce7',
-                    color: !item.productId ? '#b91c1c' : item.needsReview ? '#92400e' : '#166534',
+                    background: !item._productId ? '#fee2e2' : item.needsReview ? '#fef3c7' : '#dcfce7',
+                    color: !item._productId ? '#b91c1c' : item.needsReview ? '#92400e' : '#166534',
                     whiteSpace: 'nowrap',
                     marginLeft: 8,
                     flexShrink: 0,
                   }}>
-                    {!item.productId ? '⚪ Neselectat' : item.needsReview ? '🟡 Manual' : '🟢 Auto'}
+                    {!item._productId ? '⚪ Neselectat' : item.needsReview ? '🟡 Manual' : '🟢 Auto'}
                   </span>
                 </div>
 
@@ -575,7 +581,7 @@ export default function Upload({ onNavigate }) {
                   <label className="label">Produs</label>
                   <select
                     className="input"
-                    value={item.productId || ''}
+                    value={item._productId || ''}
                     onChange={e => assignProduct(item._idx, e.target.value)}
                   >
                     <option value="">— Selectează produs —</option>
@@ -592,34 +598,30 @@ export default function Upload({ onNavigate }) {
                       className="input"
                       type="number"
                       min="1"
-                      value={item.cantitate}
-                      onChange={e => updateItem(item._idx, 'cantitate', parseInt(e.target.value) || 1)}
+                      value={item.quantity}
+                      onChange={e => updateItem(item._idx, 'quantity', parseInt(e.target.value) || 1)}
                       style={{ width: 80 }}
                     />
                   </div>
                   <button className="btn btn-danger btn-sm" onClick={() => removeItem(item._idx)}>🗑</button>
                 </div>
 
-                {item.productId && (
+                {item._productId && (
                   <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text3)', lineHeight: '1.7' }}>
                     {isPLU
-                      ? <><span style={{ color: '#dc2626' }}>↓ se scade din stoc</span> · Preț vânzare: {item.pretVanzare} RON</>
+                      ? <span style={{ color: '#dc2626' }}>↓ se scade din stoc</span>
                       : (
                         <>
-                          {item.pretAchizitieOcr != null ? (
+                          {item.unitPrice != null ? (
                             <span style={{ display: 'block' }}>
-                              <span style={{ color: '#16a34a', fontWeight: 600 }}>Preț achiziție (factură): {item.pretAchizitieOcr} RON / buc</span>
-
+                              <span style={{ color: '#16a34a', fontWeight: 600 }}>Preț achiziție (factură): {item.unitPrice} RON / buc</span>
                             </span>
-                          ) : item.pretAchizitie != null ? (
-                            <span style={{ display: 'block' }}>Preț achiziție: {item.pretAchizitie} RON / buc</span>
                           ) : (
                             <span style={{ display: 'block', color: '#b91c1c', fontSize: 11 }}>⚠ Preț achiziție lipsă — completează manual</span>
                           )}
-                          {item.totalOcr != null && (
+                          {item.total != null && (
                             <span style={{ display: 'block' }}>
-                              Total linie: <strong>{item.totalOcr} RON</strong>
-                              {/* T4: mismatch warning */}
+                              Total linie: <strong>{item.total} RON</strong>
                               {hasMismatch(item) && (
                                 <span style={{ color: '#b91c1c', marginLeft: 6, fontSize: 11 }}>
                                   ⚠ Linia {item.lineNumber != null ? `#${item.lineNumber}` : ''} nu bate la calcul
@@ -627,21 +629,9 @@ export default function Upload({ onNavigate }) {
                               )}
                             </span>
                           )}
-                          {/* T5: price source label */}
-                          {item.sourceOcr === 'discount' && (
-                            <span style={{ display: 'block', color: '#16a34a', fontSize: 11 }}>✓ preț după rabat</span>
-                          )}
-                          {item.sourceOcr === 'computed' && (
-                            <span style={{ display: 'block', color: '#f59e0b', fontSize: 11 }}>* preț calculat</span>
-                          )}
-                          {item.sourceOcr === 'unknown' && (
-                            <span style={{ display: 'block', color: '#9ca3af', fontSize: 11 }}>? preț incert</span>
-                          )}
-                          {/* T8: ambiguous match */}
-                          {item.needsReview && item.productId && (
+                          {item.needsReview && item._productId && (
                             <span style={{ display: 'block', color: '#b45309', fontSize: 11, marginTop: 2 }}>⚠ verificare produs necesară (match ambiguu)</span>
                           )}
-                          <span style={{ display: 'block' }}>Vânzare: {item.pretVanzare} RON</span>
                         </>
                       )}
                   </div>
