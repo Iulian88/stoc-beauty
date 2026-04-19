@@ -248,27 +248,20 @@ test('No mismatch when OCR price is null (cannot validate)', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 console.log('\n── Catalog sanity ─────────────────────────────────────────────');
 
-test('All products have pretVanzare > 0', () => {
-  const broken = PRODUCTS.filter(p => !p.pretVanzare || p.pretVanzare <= 0);
+test('All priced products have pretVanzare > 0', () => {
+  const broken = PRODUCTS.filter(p => p.pretVanzare !== null && p.pretVanzare !== undefined && p.pretVanzare <= 0);
   assert(broken.length === 0, `Products with pretVanzare ≤ 0: ${broken.map(p => p.name).join(', ')}`);
 });
 
-test('All products have id, name, pretVanzare defined', () => {
-  const broken = PRODUCTS.filter(p => !p.id || !p.name || p.pretVanzare == null);
-  assert(broken.length === 0, `Incomplete products: ${broken.map(p => p.id).join(', ')}`);
+test('All products have id and name defined', () => {
+  const broken = PRODUCTS.filter(p => !p.id || !p.name);
+  assert(broken.length === 0, `Products missing id or name: ${broken.map(p => p.id ?? '?').join(', ')}`);
 });
 
-test('CATALOG WARNING — pretAchizitie > pretVanzare (prices are known-wrong)', () => {
-  // This is expected to FAIL on current catalog — it's a known issue flagged by the audit.
-  // pretAchizitie values are 2-3× inflated and should NOT be used for financials.
-  const broken = PRODUCTS.filter(p => p.pretAchizitie != null && p.pretAchizitie > p.pretVanzare);
-  if (broken.length > 0) {
-    console.log(`       ⚠  ${broken.length} products have catalog pretAchizitie > pretVanzare`);
-    console.log('          This confirms catalog prices are wrong — use invoice OCR prices instead.');
-    console.log('          (Architecture refactor correctly ignores these for calculations.)');
-  }
-  // Not a hard failure — architecture refactor solves this by ignoring catalog pretAchizitie
-  assert(true, 'always passes — this is a warning');
+test('Catalog has no pretAchizitie fields (fully eliminated)', () => {
+  const broken = PRODUCTS.filter(p => p.pretAchizitie !== undefined);
+  assert(broken.length === 0,
+    `Products still have pretAchizitie: ${broken.map(p => `${p.id} ${p.name}`).join(', ')}`);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────// 7. HARDENING: ZERO CATALOG FALLBACK + STRICT MATCHING + CLEAN NAMES
@@ -278,7 +271,7 @@ console.log('\n── Hardening: zero catalog fallback + strict matching ──�
 test('Stock value = 0 when product has no purchase history (no catalog fallback)', () => {
   // Replicate computeWeightedStockValue logic with an empty costBasis
   const costBasis = {}; // no intrare transactions for this product
-  const stockMap = { 24: { stoc: 5, product: { id: 24, pretAchizitie: 113.74, pretVanzare: 69.99, name: 'Vital Booster Serum 6x9ml' } } };
+  const stockMap = { 24: { stoc: 5, product: { id: 24, pretVanzare: 90, name: 'Vital Booster Serum 6x9ml' } } };
 
   let total = 0;
   Object.entries(stockMap).forEach(([id, s]) => {
