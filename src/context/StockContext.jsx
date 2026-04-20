@@ -1,7 +1,11 @@
 import { createContext, useContext, useState, useCallback, useMemo, useEffect } from 'react';
 import { storage } from '../services/storage';
 import { PRODUCTS } from '../data/products';
-import { hydrateFromSupabase } from '../services/supabase';
+// hydrateFromSupabase is intentionally disabled:
+// Supabase id column is bigint but transactions now use UUID strings,
+// so all syncs fail silently and hydration would overwrite localStorage
+// with stale pre-UUID data, causing data loss.
+// Supabase remains a passive write-side backup only (syncUpsert / syncDelete).
 
 const StockContext = createContext(null);
 
@@ -11,11 +15,9 @@ export function StockProvider({ children }) {
 
   const refresh = useCallback(() => setTick(t => t + 1), []);
 
-  // On first mount: pull cloud data → hydrate localStorage → refresh UI
   useEffect(() => {
     // Migration: back-fill missing pretVanzare snapshots on old transactions (runs once)
     storage.migrateOldTransactions([...PRODUCTS, ...storage.getCustomProducts()]);
-    hydrateFromSupabase().then(ok => { if (ok) refresh(); });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const transactions = useMemo(() => storage.getTransactions(), [tick]);

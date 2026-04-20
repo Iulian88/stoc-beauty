@@ -7,7 +7,12 @@ const KEYS = {
   LEARNED_ALIASES: 'stoc_learned_aliases',
 };
 
+// Module-level dirty flag — true when localStorage has changes not yet exported as backup.
+let _hasUnsavedChanges = false;
+
 export const storage = {
+  getHasUnsavedChanges() { return _hasUnsavedChanges; },
+
   getTransactions() {
     try {
       return JSON.parse(localStorage.getItem(KEYS.TRANSACTIONS) || '[]');
@@ -44,6 +49,7 @@ export const storage = {
     all.push(nou);
     localStorage.setItem(KEYS.TRANSACTIONS, JSON.stringify(all));
     syncUpsert('tranzactii', nou);
+    _hasUnsavedChanges = true;
     return nou;
   },
 
@@ -85,6 +91,7 @@ export const storage = {
       const restored = updated.find(t => t.id === target._storneazaId);
       if (restored) syncUpsert('tranzactii', restored);
     }
+    _hasUnsavedChanges = true;
   },
 
   // Creates a reversal (stornare) for a transaction.
@@ -116,6 +123,7 @@ export const storage = {
     syncUpsert('tranzactii', stornare);
     const updatedOriginal = updated.find(t => t.id === originalId);
     if (updatedOriginal) syncUpsert('tranzactii', updatedOriginal);
+    _hasUnsavedChanges = true;
     return stornare;
   },
 
@@ -129,6 +137,7 @@ export const storage = {
     localStorage.setItem(KEYS.TRANSACTIONS, JSON.stringify(updated));
     const patched = updated.find(t => t.id === id);
     if (patched) syncUpsert('tranzactii', patched);
+    _hasUnsavedChanges = true;
   },
 
   getZReports() {
@@ -205,10 +214,10 @@ export const storage = {
 
   exportJSON() {
     const data = {
+      version: 1,
       exportedAt: new Date().toISOString(),
-      tranzactii: this.getTransactions(),
-      rapoarteZ: this.getZReports(),
-      produse_custom: this.getCustomProducts(),
+      transactions: this.getTransactions(),
+      productsCustom: this.getCustomProducts(),
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -217,51 +226,48 @@ export const storage = {
     a.download = `stoc-backup-${new Date().toISOString().split('T')[0]}.json`;
     a.click();
     URL.revokeObjectURL(url);
+    _hasUnsavedChanges = false;
   },
 
-  importJSON(file) {
-    return new Promise((resolve, reject) => {
-      file.text().then(text => {
-        try {
-          const data = JSON.parse(text);
+  // Validates and REPLACES all local data from a parsed backup JSON.
+  // Supports both new format (transactions/productsCustom) and old format (tranzactii/produse_custom).
+  importJSON(data) {
+    const rawTransactions = data.transactions ?? data.tranzactii;
+    const rawProducts = data.productsCustom ?? data.produse_custom;
 
-          // Schema validation
-          if (data.tranzactii !== undefined && !Array.isArray(data.tranzactii)) {
-            throw new Error('Format invalid: câmpul "tranzactii" trebuie să fie un array.');
-          }
-          if (data.rapoarteZ !== undefined && !Array.isArray(data.rapoarteZ)) {
-            throw new Error('Format invalid: câmpul "rapoarteZ" trebuie să fie un array.');
-          }
+    if (!Array.isArray(rawTransactions)) {
+      throw new Error('Format invalid: lipsește câmpul "transactions" (array obligatoriu).');
+    }
 
-          if (Array.isArray(data.tranzactii)) {
-            // Deduplicare: nu importa tranzacții cu id deja existent
-            const existing = this.getTransactions();
-            const existingIds = new Set(existing.map(t => t.id));
-            const noi = data.tranzactii.filter(t => t.id && !existingIds.has(t.id));
-            const merged = [...existing, ...noi];
-            localStorage.setItem(KEYS.TRANSACTIONS, JSON.stringify(merged));
-            data._importedCount = noi.length;
-            data._duplicatesSkipped = data.tranzactii.length - noi.length;
-          }
+    // Validate each transaction and its items
+    for (let i = 0; i < rawTransactions.length; i++) {
+      const t = rawTransactions[i];
+      if (!t.id) throw new Error(`Tranzacție ${i + 1}: lipsește câmpul "id".`);
+      if (!t.tip) throw new Error(`Tranzacție ${i + 1}: lipsește câmpul "tip".`);
+      if (!Array.isArray(t.items)) throw new Error(`Tranzacție ${i + 1}: câmpul "items" trebuie să fie array.`);
+      for (let j = 0; j < t.items.length; j++) {
+        const item = t.items[j];
+        if (item.productId === undefined) throw new Error(`Tranzacție ${i + 1}, item ${j + 1}: lipsește "productId".`);
+        if (item.cantitate === undefined) throw new Error(`Tranzacție ${i + 1}, item ${j + 1}: lipsește "cantitate".`);
+      }
+    }
 
-          if (Array.isArray(data.rapoarteZ)) {
-            const existing = this.getZReports();
-            const existingIds = new Set(existing.map(r => r.id));
-            const noi = data.rapoarteZ.filter(r => r.id && !existingIds.has(r.id));
-            localStorage.setItem(KEYS.Z_REPORTS, JSON.stringify([...existing, ...noi]));
-          }
-
-          if (Array.isArray(data.produse_custom)) {
-            const existing = this.getCustomProducts();
-            const existingIds = new Set(existing.map(p => p.id));
-            const noi = data.produse_custom.filter(p => p.id && !existingIds.has(p.id));
-            localStorage.setItem(KEYS.CUSTOM_PRODUCTS, JSON.stringify([...existing, ...noi]));
-          }
-
-          resolve(data);
-        } catch (err) { reject(err); }
-      }).catch(reject);
+    // Fix duplicate IDs by generating new UUIDs
+    const seenIds = new Set();
+    const transactions = rawTransactions.map(t => {
+      if (seenIds.has(t.id)) return { ...t, id: crypto.randomUUID() };
+      seenIds.add(t.id);
+      return t;
     });
+
+    // REPLACE — not merge
+    localStorage.setItem(KEYS.TRANSACTIONS, JSON.stringify(transactions));
+    if (Array.isArray(rawProducts)) {
+      localStorage.setItem(KEYS.CUSTOM_PRODUCTS, JSON.stringify(rawProducts));
+    }
+
+    _hasUnsavedChanges = false; // restored from backup = clean state
+    return { count: transactions.length };
   },
 
   // Compute stock for all products

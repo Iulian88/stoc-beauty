@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { storage } from './services/storage';
 import Dashboard from './pages/Dashboard';
 import Upload from './pages/Upload';
 import Transactions from './pages/Transactions';
@@ -19,6 +20,17 @@ const NAV = [
 
 export default function App() {
   const [page, setPage] = useState('dashboard');
+
+  useEffect(() => {
+    function onBeforeUnload(e) {
+      if (storage.getHasUnsavedChanges()) {
+        e.preventDefault();
+        e.returnValue = 'Ai modificări nesalvate. Sigur vrei să părăsești pagina?';
+      }
+    }
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
 
   return (
     <StockProvider>

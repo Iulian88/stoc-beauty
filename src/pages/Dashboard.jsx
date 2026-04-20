@@ -1,10 +1,48 @@
+import { useState } from 'react';
 import { storage } from '../services/storage';
 import { useStock } from '../context/StockContext';
 
 const ON_TERMINATE_THRESHOLD = 3;
 
 export default function Dashboard({ onNavigate }) {
-  const { stock, transactions } = useStock();
+  const { stock, transactions, refresh } = useStock();
+  const [importError, setImportError] = useState(null);
+  const [importSuccess, setImportSuccess] = useState(null);
+
+  const dirty = storage.getHasUnsavedChanges();
+
+  function handleExport() {
+    storage.exportJSON();
+    refresh(); // update dirty state in UI
+  }
+
+  async function handleImportFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = ''; // allow re-selecting same file
+    setImportError(null);
+    setImportSuccess(null);
+
+    let data;
+    try {
+      data = JSON.parse(await file.text());
+    } catch {
+      setImportError('Fișierul nu este JSON valid.');
+      return;
+    }
+
+    if (!confirm(
+      '⚠ Această acțiune va suprascrie TOATE datele existente (tranzacții + produse custom).\n\nSigur vrei să continui?'
+    )) return;
+
+    try {
+      const result = storage.importJSON(data);
+      refresh();
+      setImportSuccess(`Import reușit: ${result.count} tranzacții restaurate.`);
+    } catch (err) {
+      setImportError(err.message);
+    }
+  }
 
   const intrari = transactions.filter(t => t.tip === 'intrare').length;
   const iesiri = transactions.filter(t => t.tip === 'iesire').length;
@@ -122,11 +160,37 @@ export default function Dashboard({ onNavigate }) {
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button className="btn btn-secondary btn-sm" onClick={() => storage.exportJSON()}>
-          💾 Export JSON
-        </button>
+      {/* ── Backup controls ──────────────────────────────────────── */}
+      {dirty && (
+        <div
+          className="card"
+          style={{ borderLeft: '4px solid #f59e0b', marginBottom: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}
+        >
+          <div style={{ fontWeight: 500, color: '#b45309', fontSize: 13 }}>
+            ⚠ Ai modificări nesalvate
+          </div>
+          <button
+            className="btn btn-sm"
+            style={{ background: '#f59e0b', color: '#000', border: 'none', fontWeight: 600, cursor: 'pointer' }}
+            onClick={handleExport}
+          >
+            💾 Export backup
+          </button>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+        <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }}>
+          📥 Import backup
+          <input type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportFile} />
+        </label>
       </div>
+      {importError && (
+        <div style={{ color: '#dc2626', fontSize: 12, marginTop: 4 }}>❌ {importError}</div>
+      )}
+      {importSuccess && (
+        <div style={{ color: '#16a34a', fontSize: 12, marginTop: 4 }}>✅ {importSuccess}</div>
+      )}
     </div>
   );
 }
