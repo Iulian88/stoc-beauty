@@ -166,13 +166,14 @@ export const storage = {
     catch { return []; }
   },
 
-  saveCustomProduct({ name }) {
+  saveCustomProduct({ name, pretVanzare }) {
     const all = this.getCustomProducts();
     const prod = {
       id: crypto.randomUUID(),
       name,
       aliases: [],
       isCustom: true,
+      ...(pretVanzare > 0 ? { pretVanzare } : {}),
     };
     all.push(prod);
     localStorage.setItem(KEYS.CUSTOM_PRODUCTS, JSON.stringify(all));

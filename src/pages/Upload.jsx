@@ -3,6 +3,8 @@ import { runClaudeOCR, cleanupWorker, cleanProductName } from '../services/ocr';
 import { storage } from '../services/storage';
 import { PRODUCTS } from '../data/products';
 import { useStock } from '../context/StockContext';
+import { processEJImport } from '../services/ejImport';
+import EJImportPreview from '../components/EJImportPreview';
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
@@ -31,15 +33,22 @@ export default function Upload({ onNavigate }) {
   const cameraRef = useRef();
 
   // ── Iesire (vânzări raport casă) state ───────────────────────────────────
-  const [salesItems, setSalesItems] = useState([]);     // [{ id, productId, productName, cantitate }]
+  const [salesItems, setSalesItems] = useState([]);     // [{ id, productId, productName, cantitate, cantitateInput }]
   const [salesSearch, setSalesSearch] = useState('');   // text filter for product dropdown
   const [salesProductId, setSalesProductId] = useState('');
   const [salesQty, setSalesQty] = useState(1);
   const [salesRef, setSalesRef] = useState('');         // optional reference
   const [salesSaved, setSalesSaved] = useState(false);  // success state for iesire
 
+  // ── EJ import state ─────────────────────────────────────────────────────
+  const [ejPreview, setEjPreview]   = useState(null);  // null | { recognized, unmatched, skipped }
+  const [ejFileName, setEjFileName] = useState('');
+  const [ejError, setEjError]       = useState('');
+  const ejFileRef = useRef();
+
   const allProducts = [...PRODUCTS, ...customProducts];
   const isPLU = docType === 'iesire';
+  const isEJ  = docType === 'ej';
 
   const filteredProducts = allProducts.filter(p =>
     salesSearch === '' || p.name.toLowerCase().includes(salesSearch.toLowerCase())
@@ -55,9 +64,13 @@ export default function Upload({ onNavigate }) {
       const existing = prev.find(i => i.productId === id);
       if (existing) {
         // Merge quantities
-        return prev.map(i => i.productId === id ? { ...i, cantitate: i.cantitate + qty } : i);
+        return prev.map(i => {
+          if (i.productId !== id) return i;
+          const newQty = i.cantitate + qty;
+          return { ...i, cantitate: newQty, cantitateInput: String(newQty) };
+        });
       }
-      return [...prev, { id: Date.now(), productId: id, productName: prod.name, cantitate: qty }];
+      return [...prev, { id: Date.now(), productId: id, productName: prod.name, cantitate: qty, cantitateInput: String(qty) }];
     });
     setSalesProductId('');
     setSalesSearch('');
@@ -69,12 +82,26 @@ export default function Upload({ onNavigate }) {
   }
 
   function updateSalesCantitate(id, val) {
-    const qty = Math.max(1, parseInt(val) || 1);
-    setSalesItems(prev => prev.map(i => i.id === id ? { ...i, cantitate: qty } : i));
+    // Store raw string — no clamping, allows empty/partial input
+    setSalesItems(prev => prev.map(i => i.id === id ? { ...i, cantitateInput: val } : i));
+  }
+
+  function normalizeSalesCantitate(id) {
+    // Called onBlur: enforce minimum 1 and sync cantitate
+    setSalesItems(prev => prev.map(i => {
+      if (i.id !== id) return i;
+      const num = Number(i.cantitateInput);
+      const valid = num > 0 ? Math.round(num) : 1;
+      return { ...i, cantitate: valid, cantitateInput: String(valid) };
+    }));
   }
 
   function incrementSalesItem(id) {
-    setSalesItems(prev => prev.map(i => i.id === id ? { ...i, cantitate: i.cantitate + 1 } : i));
+    setSalesItems(prev => prev.map(i => {
+      if (i.id !== id) return i;
+      const newQty = i.cantitate + 1;
+      return { ...i, cantitate: newQty, cantitateInput: String(newQty) };
+    }));
   }
 
   function saveSalesTransaction() {
@@ -85,7 +112,7 @@ export default function Upload({ onNavigate }) {
       items: salesItems.map(i => ({
         productId: i.productId,
         productName: i.productName,
-        cantitate: i.cantitate,
+        cantitate: Math.max(1, Number(i.cantitateInput) || i.cantitate || 1),
       })),
     });
     refresh();
@@ -224,6 +251,20 @@ export default function Upload({ onNavigate }) {
     });
   }
 
+  function openCreateNew(idx) {
+    setParsedItems(prev => prev.map(item =>
+      item._idx === idx
+        ? { ...item, _creatingNew: true, _newName: item._newName || item.rawName || '' }
+        : item
+    ));
+  }
+
+  function closeCreateNew(idx) {
+    setParsedItems(prev => prev.map(item =>
+      item._idx === idx ? { ...item, _creatingNew: false } : item
+    ));
+  }
+
   function addManualItem() {
     const newIdx = Date.now();
     setParsedItems(prev => [...prev, {
@@ -238,6 +279,7 @@ export default function Upload({ onNavigate }) {
       needsReview: true,
       _confirmed: false,
       _newName: '',
+      _creatingNew: false,
     }]);
   }
 
@@ -250,9 +292,10 @@ export default function Upload({ onNavigate }) {
   function confirmNewProduct(idx) {
     const item = parsedItems.find(i => i._idx === idx);
     const name = (item._newName || '').trim();
-    if (!name) return;
+    if (name.length < 3) return;
 
-    const newProd = storage.saveCustomProduct({ name });
+    const pretVanzare = Number(item._newPretVanzare) > 0 ? Number(item._newPretVanzare) : undefined;
+    const newProd = storage.saveCustomProduct({ name, pretVanzare });
     setCustomProducts(storage.getCustomProducts());
 
     setParsedItems(prev => prev.map(i =>
@@ -262,6 +305,7 @@ export default function Upload({ onNavigate }) {
         _productName: newProd.name,
         needsReview: false,
         _confirmed: true,
+        _creatingNew: false,
       } : i
     ));
   }
@@ -305,6 +349,107 @@ export default function Upload({ onNavigate }) {
     if (b.lineNumber != null) return 1;
     return 0;
   });
+
+  // ── EJ file handler ──────────────────────────────────────────────────────
+  function handleEJFile(file) {
+    if (!file) return;
+    setEjError('');
+    setEjPreview(null);
+    setEjFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target.result);
+        const result = processEJImport(data);
+        setEjPreview(result);
+      } catch (err) {
+        setEjError('Eroare la citire: ' + err.message);
+      }
+    };
+    reader.readAsText(file, 'utf-8');
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RENDER: Import vânzări (EJ) — safe preview, no data is written
+  // ══════════════════════════════════════════════════════════════════════════
+  if (isEJ) {
+    return (
+      <div>
+        <p className="page-title">Import vânzări (EJ)</p>
+
+        {/* Doc type toggle */}
+        <div className="form-group">
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className="btn"
+              style={{ flex: 1, background: 'var(--bg3)', border: '1px solid var(--border2)', color: 'var(--text2)' }}
+              onClick={() => setDocType('intrare')}
+            >
+              <div>📥 Factură</div>
+              <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↑ intrare stoc</div>
+            </button>
+            <button
+              className="btn"
+              style={{ flex: 1, background: 'var(--bg3)', border: '1px solid var(--border2)', color: 'var(--text2)' }}
+              onClick={() => setDocType('iesire')}
+            >
+              <div>🛒 Vânzări</div>
+              <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↓ raport casă</div>
+            </button>
+            <button
+              className="btn"
+              style={{ flex: 1, background: 'rgba(99,102,241,0.12)', border: '1px solid #6366f1', color: '#6366f1' }}
+            >
+              <div>📊 Import EJ</div>
+              <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↑↓ istoric casă</div>
+            </button>
+          </div>
+        </div>
+
+        {/* File upload zone (hidden when preview is shown) */}
+        {!ejPreview && (
+          <div className="card" style={{ textAlign: 'center', padding: '28px 20px', marginBottom: 12 }}>
+            <div style={{ fontSize: 40, marginBottom: 10 }}>📂</div>
+            <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--text1)', marginBottom: 6 }}>
+              Selectează fișierul JSON
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 16, lineHeight: 1.6 }}>
+              Fișierul <code>vanzari_structurat.json</code> generat din jurnalul EJ.<br />
+              Nicio dată nu va fi salvată automat.
+            </div>
+            <button
+              className="btn btn-primary"
+              style={{ background: '#6366f1', borderColor: '#6366f1' }}
+              onClick={() => ejFileRef.current?.click()}
+            >
+              📂 Alege fișier .json
+            </button>
+            <input
+              ref={ejFileRef}
+              type="file"
+              accept=".json,application/json"
+              style={{ display: 'none' }}
+              onChange={e => { handleEJFile(e.target.files[0]); e.target.value = ''; }}
+            />
+          </div>
+        )}
+
+        {ejError && (
+          <div className="alert alert-warning" style={{ marginBottom: 12 }}>
+            ❌ {ejError}
+          </div>
+        )}
+
+        {ejPreview && (
+          <EJImportPreview
+            preview={ejPreview}
+            fileName={ejFileName}
+            onReset={() => { setEjPreview(null); setEjFileName(''); setEjError(''); }}
+          />
+        )}
+      </div>
+    );
+  }
 
   // ══════════════════════════════════════════════════════════════════════════
   // RENDER: "Introdu vânzări" (iesire) — completely separate from OCR flow
@@ -363,6 +508,14 @@ export default function Upload({ onNavigate }) {
             >
               <div>🛒 Vânzări</div>
               <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↓ raport casă</div>
+            </button>
+            <button
+              className="btn"
+              style={{ flex: 1, background: 'var(--bg3)', border: '1px solid var(--border2)', color: 'var(--text2)' }}
+              onClick={() => setDocType('ej')}
+            >
+              <div>📊 Import EJ</div>
+              <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↑↓ istoric casă</div>
             </button>
           </div>
         </div>
@@ -462,8 +615,11 @@ export default function Upload({ onNavigate }) {
                   className="input"
                   type="number"
                   min="1"
-                  value={item.cantitate}
+                  step="1"
+                  placeholder="1"
+                  value={item.cantitateInput ?? ''}
                   onChange={e => updateSalesCantitate(item.id, e.target.value)}
+                  onBlur={() => normalizeSalesCantitate(item.id)}
                   style={{ width: 58, textAlign: 'center', flexShrink: 0 }}
                 />
                 {/* Remove */}
@@ -545,6 +701,14 @@ export default function Upload({ onNavigate }) {
               >
                 <div>🛒 Vânzări</div>
                 <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↓ raport casă</div>
+              </button>
+              <button
+                className="btn"
+                style={{ flex: 1, background: 'var(--bg3)', border: '1px solid var(--border2)', color: 'var(--text2)' }}
+                onClick={() => setDocType('ej')}
+              >
+                <div>📊 Import EJ</div>
+                <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↑↓ istoric casă</div>
               </button>
             </div>
           </div>
@@ -667,7 +831,7 @@ export default function Upload({ onNavigate }) {
 
           {sortedItems.map(item => {
             const isNewProduct = item.needsReview && !item._productId;
-            const canConfirm = (item._newName || '').trim().length > 0;
+            const canConfirm = (item._newName || '').trim().length >= 3;
 
             if (isNewProduct) {
               return (
@@ -687,6 +851,15 @@ export default function Upload({ onNavigate }) {
                       value={item._newName || ''}
                       onChange={e => updateNewProductField(item._idx, '_newName', e.target.value)}
                     />
+                    {(item._newName || '').trim().length > 0 && (item._newName || '').trim().length < 3 && (
+                      <div style={{ fontSize: 11, color: '#b91c1c', marginTop: 3 }}>Minim 3 caractere</div>
+                    )}
+                    {(() => {
+                      const trimmed = (item._newName || '').trim().toLowerCase();
+                      return trimmed.length >= 3 && allProducts.some(p => p.name.toLowerCase() === trimmed)
+                        ? <div style={{ fontSize: 11, color: '#b45309', marginTop: 3 }}>⚠ Există deja un produs cu acest nume</div>
+                        : null;
+                    })()}
                   </div>
 
                   <div style={{ display: 'flex', gap: 8 }}>
@@ -698,6 +871,18 @@ export default function Upload({ onNavigate }) {
                         min="1"
                         value={item.quantity}
                         onChange={e => updateItem(item._idx, 'quantity', parseInt(e.target.value) || 1)}
+                      />
+                    </div>
+                    <div className="form-group" style={{ flex: 1 }}>
+                      <label className="label">Preț vânzare RON (opț.)</label>
+                      <input
+                        className="input"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        placeholder="ex: 45.00"
+                        value={item._newPretVanzare || ''}
+                        onChange={e => updateNewProductField(item._idx, '_newPretVanzare', e.target.value)}
                       />
                     </div>
                   </div>
@@ -817,6 +1002,69 @@ export default function Upload({ onNavigate }) {
                         <option key={p.id} value={p.id}>{p.name}{p.isCustom ? ' ★' : ''}</option>
                       ))}
                     </select>
+
+                    {!item._creatingNew && (
+                      <button
+                        className="btn btn-sm"
+                        style={{ marginTop: 6, width: '100%', background: 'rgba(99,102,241,0.1)', border: '1px solid #6366f1', color: '#6366f1', borderRadius: 6, fontSize: 12, padding: '6px 0' }}
+                        onClick={() => openCreateNew(item._idx)}
+                      >
+                        ➕ Adaugă produs nou în catalog
+                      </button>
+                    )}
+
+                    {item._creatingNew && (
+                      <div style={{ marginTop: 8, padding: 10, background: 'rgba(99,102,241,0.06)', border: '1px solid #6366f1', borderRadius: 8 }}>
+                        <div style={{ fontWeight: 600, fontSize: 12, color: '#6366f1', marginBottom: 8 }}>Produs nou</div>
+                        <div className="form-group" style={{ marginBottom: 8 }}>
+                          <label className="label">Denumire</label>
+                          <input
+                            className="input"
+                            placeholder="min. 3 caractere"
+                            value={item._newName || ''}
+                            onChange={e => updateNewProductField(item._idx, '_newName', e.target.value)}
+                            autoFocus
+                          />
+                          {(item._newName || '').trim().length > 0 && (item._newName || '').trim().length < 3 && (
+                            <div style={{ fontSize: 11, color: '#b91c1c', marginTop: 3 }}>Minim 3 caractere</div>
+                          )}
+                          {(() => {
+                            const trimmed = (item._newName || '').trim().toLowerCase();
+                            return trimmed.length >= 3 && allProducts.some(p => p.name.toLowerCase() === trimmed)
+                              ? <div style={{ fontSize: 11, color: '#b45309', marginTop: 3 }}>⚠ Există deja un produs cu acest nume</div>
+                              : null;
+                          })()}
+                        </div>
+                        <div className="form-group" style={{ marginBottom: 8 }}>
+                          <label className="label">Preț vânzare RON (opțional)</label>
+                          <input
+                            className="input"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            placeholder="ex: 45.00"
+                            value={item._newPretVanzare || ''}
+                            onChange={e => updateNewProductField(item._idx, '_newPretVanzare', e.target.value)}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button
+                            className="btn btn-primary btn-sm"
+                            style={{ flex: 1 }}
+                            disabled={(item._newName || '').trim().length < 3}
+                            onClick={() => confirmNewProduct(item._idx)}
+                          >
+                            ✅ Creează &amp; adaugă
+                          </button>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => closeCreateNew(item._idx)}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 

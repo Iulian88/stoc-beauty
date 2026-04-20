@@ -89,8 +89,7 @@ export const PRODUCTS = [
   { id: 49, name: "Luxe Oil Wella 30ml",                    pretVanzare: null,  aliases: ["luxeoil wella", "luxe oil wella", "wella luxeoil", "luxe oil 30"] },
 
   // ── Sleek Smoother ───────────────────────────────────────────────────────
-  // ⚠ ATENȚIE: 200ml (120 RON) > 750ml (55 RON) — verifică dacă prețurile sunt corecte
-  { id: 51, name: "Masca Sleek Smoother 200ml",             pretVanzare: 120,   aliases: ["sleek smoother 200", "sleek smother 200", "masca sleek 200"] },
+  { id: 51, name: "Masca Sleek Smoother 200ml",             pretVanzare: 70,    aliases: ["sleek smoother 200", "sleek smother 200", "masca sleek 200"] },
   { id: 52, name: "Masca Sleek Smoother 750ml",             pretVanzare: 55,    aliases: ["sleek smoother 750", "sleek smother 750", "masca sleek 750"] },
 
   // ── Curl / Live In ───────────────────────────────────────────────────────
