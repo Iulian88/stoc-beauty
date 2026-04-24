@@ -75,6 +75,31 @@ Extract ONLY the grand total sales amount in RON.
 Return STRICT JSON: { "total": number }
 If not found, return: { "total": null }`;
 
+const RECEIPT_RAW_PROMPT = `You are an OCR parser for Romanian fiscal receipts (bonuri fiscale / raport de casă).
+
+CRITICAL OUTPUT RULE:
+* Output MUST be valid JSON
+* NO markdown, NO explanations
+* JSON.parse() must work directly
+
+GOAL: Extract all sold product lines with name and quantity.
+
+RULES:
+* Include ONLY real product lines (actual items sold)
+* IGNORE any line containing: TOTAL, SUBTOTAL, TVA, NUMERAR, CORECTIE, NEPLATITOR, BON FISCAL, BON NEFISCAL, VA MULTUMIM, EJTRZ, BF., S.N., OPERATOR, BALAN, REST, CARD
+* IGNORE any line with a negative price or negative quantity
+* Quantity is usually listed as "1,000 BUC." or just "1" — extract only the number
+* If the same product appears multiple times, include each occurrence separately
+* Keep product names EXACTLY as printed (uppercase)
+
+OUTPUT FORMAT (return exactly this structure):
+{
+  "lines": [
+    { "name": "SAMPON INTENSIVE CLEANSER 1000ML", "quantity": 1 },
+    { "name": "SPRAY PROTECTIE TERMICA 150ML", "quantity": 2 }
+  ]
+}`;
+
 export default async function handler(req, res) {
   console.log('START OCR');
   console.log('Method:', req.method);
@@ -102,7 +127,7 @@ export default async function handler(req, res) {
     }
 
     const model = 'claude-haiku-4-5';
-    const prompt = type === 'zreport' ? ZREPORT_PROMPT : INVOICE_PROMPT;
+    const prompt = type === 'zreport' ? ZREPORT_PROMPT : type === 'receipt_raw' ? RECEIPT_RAW_PROMPT : INVOICE_PROMPT;
     console.log('Model:', model);
     console.log('Request base64 size (bytes):', Buffer.byteLength(imageBase64, 'utf8'));
 

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { runClaudeOCR, cleanupWorker, cleanProductName } from '../services/ocr';
+import { runClaudeOCR, runClaudeReceiptOCR, cleanupWorker, cleanProductName } from '../services/ocr';
 import { storage } from '../services/storage';
 import { PRODUCTS } from '../data/products';
 import { useStock } from '../context/StockContext';
@@ -55,6 +55,7 @@ export default function Upload({ onNavigate }) {
   const allProducts = [...PRODUCTS, ...customProducts];
   const isPLU = docType === 'iesire';
   const isEJ  = docType === 'ej';
+  const isReceiptOCR = docType === 'ocr_raport';
 
   // ── Draft restore on mount ───────────────────────────────────────────────
   // NOTE: all state vars and derived consts (isPLU etc.) are declared above —
@@ -198,7 +199,9 @@ export default function Upload({ onNavigate }) {
     setStep(1);
     setOcrStatus('Se pregătește imaginea...');
 
-    const result = await runClaudeOCR(imageFile, setOcrStatus);
+    const result = isReceiptOCR
+      ? await runClaudeReceiptOCR(imageFile, setOcrStatus)
+      : await runClaudeOCR(imageFile, setOcrStatus);
     if (!result.success) {
       setOcrStatus('❌ Eroare: ' + result.error);
       return;
@@ -369,9 +372,9 @@ export default function Upload({ onNavigate }) {
     if (validItems.length === 0) return;
 
     storage.saveTransaction({
-      tip: docType,
-      sursa: sursa || 'Factură',
-      factura: facturaData ?? undefined,
+      tip: docType === 'ocr_raport' ? 'iesire' : docType,
+      sursa: sursa || (docType === 'ocr_raport' ? 'ocr raport casa' : 'Factură'),
+      factura: docType === 'ocr_raport' ? undefined : (facturaData ?? undefined),
       items: validItems.map(item => ({
         productId: item._productId,
         productName: item._productName,
@@ -456,6 +459,14 @@ export default function Upload({ onNavigate }) {
             >
               <div>📊 Import EJ</div>
               <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↑↓ istoric casă</div>
+            </button>
+            <button
+              className="btn"
+              style={{ flex: 1, background: 'var(--bg3)', border: '1px solid var(--border2)', color: 'var(--text2)' }}
+              onClick={() => setDocType('ocr_raport')}
+            >
+              <div>📷 OCR Casă</div>
+              <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↓ vânzări poză</div>
             </button>
           </div>
         </div>
@@ -745,7 +756,7 @@ export default function Upload({ onNavigate }) {
   // ══════════════════════════════════════════════════════════════════════════
   return (
     <div>
-      <p className="page-title">Adaugă factură — intrare stoc</p>
+      <p className="page-title">{isReceiptOCR ? 'OCR Raport Casă' : 'Adaugă factură — intrare stoc'}</p>
 
       {/* Step indicator */}
       <div className="steps" style={{ marginBottom: 24 }}>
@@ -799,21 +810,34 @@ export default function Upload({ onNavigate }) {
                 <div>📊 Import EJ</div>
                 <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↑↓ istoric casă</div>
               </button>
+              <button
+                className="btn"
+                style={{
+                  flex: 1,
+                  background: isReceiptOCR ? 'rgba(220,38,38,0.12)' : 'var(--bg3)',
+                  border: isReceiptOCR ? '1px solid #dc2626' : '1px solid var(--border2)',
+                  color: isReceiptOCR ? '#dc2626' : 'var(--text2)',
+                }}
+                onClick={() => setDocType('ocr_raport')}
+              >
+                <div>📷 OCR Casă</div>
+                <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↓ vânzări poză</div>
+              </button>
             </div>
           </div>
 
           <div className="form-group">
-            <label className="label">Referință factură (opțional)</label>
+            <label className="label">{isReceiptOCR ? 'Referință (opțional)' : 'Referință factură (opțional)'}</label>
             <input
               className="input"
-              placeholder="ex: Factură #123 / Furnizor X"
+              placeholder={isReceiptOCR ? 'ex: 04/04/2026' : 'ex: Factură #123 / Furnizor X'}
               value={sursa}
               onChange={e => setSursa(e.target.value)}
             />
           </div>
 
           <div className="form-group">
-            <label className="label">Imagine factură</label>
+            <label className="label">{isReceiptOCR ? 'Imagine raport casă' : 'Imagine factură'}</label>
             <div
               className={`upload-zone ${dragOver ? 'drag-over' : ''}`}
               onDragOver={e => { e.preventDefault(); setDragOver(true); }}
@@ -1212,10 +1236,15 @@ export default function Upload({ onNavigate }) {
           <div style={{ fontSize: 56, marginBottom: 16 }}>✅</div>
           <div style={{ fontFamily: 'DM Serif Display, serif', fontSize: 22, marginBottom: 8 }}>Salvat cu succes!</div>
           <div style={{ color: 'var(--text3)', fontSize: 14, marginBottom: 32 }}>
-            {confirmedCount} produse au fost <strong style={{ color: 'var(--green)' }}>adăugate în stoc</strong> (factură).
+            {confirmedCount} produse au fost{' '}
+            {isReceiptOCR
+              ? <strong style={{ color: '#dc2626' }}>scăzute din stoc</strong>
+              : <strong style={{ color: 'var(--green)' }}>adăugate în stoc</strong>
+            }
+            {isReceiptOCR ? ' (casă)' : ' (factură)'}.
           </div>
           <button className="btn btn-primary" onClick={reset} style={{ marginBottom: 10 }}>
-            📥 Adaugă altă factură
+            {isReceiptOCR ? '📷 OCR alt raport' : '📥 Adaugă altă factură'}
           </button>
           <button className="btn btn-secondary" onClick={() => onNavigate('stock')}>
             📦 Vezi stocul

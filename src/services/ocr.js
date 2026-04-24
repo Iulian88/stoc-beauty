@@ -107,6 +107,32 @@ export async function runClaudeOCR(imageFile, onProgress) {
   }
 }
 
+export async function runClaudeReceiptOCR(imageFile, onProgress) {
+  try {
+    const { items } = await callOcrApi(imageFile, 'receipt_raw', onProgress);
+    const count = (items || []).length;
+    onProgress?.(`✓ ${count} produs${count !== 1 ? 'e' : ''} extras${count !== 1 ? 'e' : ''}!`);
+    const results = [];
+    for (const item of (items || [])) {
+      console.log('[RECEIPT OCR LINE]', { name: item.nume, qty: item.cantitate });
+      const cleanedName = cleanProductName(item.nume);
+      const match = matchProduct(cleanedName);
+      const matchNeedsReview = match ? match.needsReview : true;
+      results.push({
+        lineNumber: item.line_number ?? null,
+        rawName: item.nume,
+        quantity: item.cantitate || 1,
+        suggestedProductId: match ? match.product.id : null,
+        suggestedProductName: match ? match.product.name : null,
+        needsReview: matchNeedsReview,
+      });
+    }
+    return { success: true, items: results, factura: null };
+  } catch (error) {
+    return { success: false, items: [], factura: null, error: error.message };
+  }
+}
+
 export async function runClaudeZReport(imageFile, onProgress) {
   try {
     const { total } = await callOcrApi(imageFile, 'zreport', onProgress);
