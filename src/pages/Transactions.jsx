@@ -344,7 +344,7 @@ export default function Transactions() {
       {/* ── Correction modal ──────────────────────────────────────────── */}
       {correctingTx && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-          <div style={{ background: 'var(--surface, #fff)', width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto', borderRadius: '16px 16px 0 0', padding: 20 }}>
+          <div style={{ background: 'var(--bg2)', color: 'var(--text)', width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto', borderRadius: '16px 16px 0 0', padding: 20 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <div style={{ fontWeight: 600, fontSize: 15 }}>✏️ Corectează tranzacție</div>
               <button className="btn btn-secondary btn-sm" onClick={closeCorrectionModal}>✕</button>

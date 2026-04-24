@@ -100,7 +100,7 @@ export default function Inventory() {
           {diffList.map(d => (
             <div key={d.product.id} className="list-item">
               <div className="list-item-name">{d.product.name}</div>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 <span className="badge" style={{ background: 'var(--bg3)', color: 'var(--text2)' }}>
                   sistem: {d.stoc}
                 </span>

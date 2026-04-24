@@ -583,11 +583,10 @@ export default function Upload({ onNavigate }) {
 
         {/* Doc type toggle */}
         <div className="form-group">
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div className="doc-type-grid">
             <button
               className="btn"
               style={{
-                flex: 1,
                 background: 'var(--bg3)',
                 border: '1px solid var(--border2)',
                 color: 'var(--text2)',
@@ -600,7 +599,6 @@ export default function Upload({ onNavigate }) {
             <button
               className="btn"
               style={{
-                flex: 1,
                 background: 'rgba(224,92,92,0.15)',
                 border: '1px solid var(--red)',
                 color: 'var(--red)',
@@ -611,11 +609,19 @@ export default function Upload({ onNavigate }) {
             </button>
             <button
               className="btn"
-              style={{ flex: 1, background: 'var(--bg3)', border: '1px solid var(--border2)', color: 'var(--text2)' }}
+              style={{ background: 'var(--bg3)', border: '1px solid var(--border2)', color: 'var(--text2)' }}
               onClick={() => switchDocType('ej')}
             >
               <div>📊 Import EJ</div>
               <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↑↓ istoric casă</div>
+            </button>
+            <button
+              className="btn"
+              style={{ background: 'var(--bg3)', border: '1px solid var(--border2)', color: 'var(--text2)' }}
+              onClick={() => switchDocType('ocr_raport')}
+            >
+              <div>📷 OCR Casă</div>
+              <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↓ vânzări poză</div>
             </button>
           </div>
         </div>
