@@ -436,7 +436,7 @@ export default function Upload({ onNavigate }) {
 
         {/* Doc type toggle */}
         <div className="form-group">
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div className="doc-type-grid">
             <button
               className="btn"
               style={{ flex: 1, background: 'var(--bg3)', border: '1px solid var(--border2)', color: 'var(--text2)' }}
@@ -776,7 +776,7 @@ export default function Upload({ onNavigate }) {
         <>
           <div className="form-group">
             <label className="label">Tip document</label>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div className="doc-type-grid">
               <button
                 className="btn"
                 style={{

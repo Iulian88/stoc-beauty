@@ -511,6 +511,32 @@ select.input option { background: var(--bg3); }
   font-weight: 500;
 }
 
+/* Doc type toggle — 2×2 grid on narrow screens, row on wide */
+.doc-type-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+@media (min-width: 440px) {
+  .doc-type-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+/* Doc type toggle — 2×2 grid on narrow screens, row on wide */
+.doc-type-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+@media (min-width: 440px) {
+  .doc-type-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
 /* RESPONSIVE for desktop */
 @media (min-width: 480px) {
   .app {
