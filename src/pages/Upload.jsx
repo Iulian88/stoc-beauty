@@ -15,8 +15,47 @@ export default function Upload({ onNavigate }) {
   const [step, setStep] = useState(0);
   const [docType, setDocType] = useState('intrare');
 
+  // Ref set synchronously in the restore-check effect (which runs BEFORE the autosave
+  // effect in the same flush). Prevents autosave from deleting the draft while the
+  // restore banner is visible and the user hasn’t responded yet.
+  const draftPendingRef = useRef(false);
+
   // Cleanup Tesseract worker when leaving the Upload page
   useEffect(() => () => { cleanupWorker(); }, []);
+
+  // ── Draft restore on mount ───────────────────────────────────────────────
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('sales_draft');
+      if (!raw) return;
+      const draft = JSON.parse(raw);
+      if (draft?.items?.length > 0) {
+        draftPendingRef.current = true; // must be set before autosave effect runs
+        setDraftRestorePrompt(true);
+      }
+    } catch { /* ignore corrupt draft */ }
+  }, []);
+
+  // ── Autosave draft on every change ──────────────────────────────────────
+  useEffect(() => {
+    if (salesSaved) return; // don't overwrite cleared draft after success
+    if (draftPendingRef.current) return; // restore decision pending — don’t touch draft
+    if (salesItems.length === 0 && !salesRef.trim()) {
+      localStorage.removeItem('sales_draft');
+      return;
+    }
+    try {
+      localStorage.setItem('sales_draft', JSON.stringify({ items: salesItems, ref: salesRef }));
+    } catch { /* storage full — silently skip */ }
+  }, [salesItems, salesRef, salesSaved]);
+
+  // ── beforeunload protection ──────────────────────────────────────────────
+  useEffect(() => {
+    if (!isPLU || salesItems.length === 0) return;
+    const handler = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isPLU, salesItems.length]);
 
   // ── Intrare (OCR invoice) state ───────────────────────────────────────────
   const [sursa, setSursa] = useState('');
@@ -39,6 +78,7 @@ export default function Upload({ onNavigate }) {
   const [salesQty, setSalesQty] = useState(1);
   const [salesRef, setSalesRef] = useState('');         // optional reference
   const [salesSaved, setSalesSaved] = useState(false);  // success state for iesire
+  const [draftRestorePrompt, setDraftRestorePrompt] = useState(false);
 
   // ── EJ import state ─────────────────────────────────────────────────────
   const [ejPreview, setEjPreview]   = useState(null);  // null | { recognized, unmatched, skipped }
@@ -55,22 +95,21 @@ export default function Upload({ onNavigate }) {
   );
 
   function addSalesItem() {
-    const id = parseInt(salesProductId);
-    if (!id) return;
-    const prod = allProducts.find(p => p.id === id);
+    if (!salesProductId) return;
+    const prod = allProducts.find(p => String(p.id) === String(salesProductId));
     if (!prod) return;
     const qty = Math.max(1, salesQty || 1);
     setSalesItems(prev => {
-      const existing = prev.find(i => i.productId === id);
+      const existing = prev.find(i => i.productId === prod.id);
       if (existing) {
         // Merge quantities
         return prev.map(i => {
-          if (i.productId !== id) return i;
+          if (i.productId !== prod.id) return i;
           const newQty = i.cantitate + qty;
           return { ...i, cantitate: newQty, cantitateInput: String(newQty) };
         });
       }
-      return [...prev, { id: Date.now(), productId: id, productName: prod.name, cantitate: qty, cantitateInput: String(qty) }];
+      return [...prev, { id: Date.now(), productId: prod.id, productName: prod.name, cantitate: qty, cantitateInput: String(qty) }];
     });
     setSalesProductId('');
     setSalesSearch('');
@@ -106,17 +145,22 @@ export default function Upload({ onNavigate }) {
 
   function saveSalesTransaction() {
     if (salesItems.length === 0) return;
-    storage.saveTransaction({
-      tip: 'iesire',
-      sursa: salesRef.trim() || 'raport casa',
-      items: salesItems.map(i => ({
-        productId: i.productId,
-        productName: i.productName,
-        cantitate: Math.max(1, Number(i.cantitateInput) || i.cantitate || 1),
-      })),
-    });
-    refresh();
-    setSalesSaved(true);
+    try {
+      storage.saveTransaction({
+        tip: 'iesire',
+        sursa: salesRef.trim() || 'raport casa',
+        items: salesItems.map(i => ({
+          productId: i.productId,
+          productName: i.productName,
+          cantitate: Math.max(1, Number(i.cantitateInput) || i.cantitate || 1),
+        })),
+      });
+      localStorage.removeItem('sales_draft');
+      refresh();
+      setSalesSaved(true);
+    } catch (err) {
+      alert('❌ ' + err.message);
+    }
   }
 
   function resetSales() {
@@ -126,6 +170,14 @@ export default function Upload({ onNavigate }) {
     setSalesQty(1);
     setSalesRef('');
     setSalesSaved(false);
+    localStorage.removeItem('sales_draft');
+  }
+
+  function switchDocType(type) {
+    if (salesItems.length > 0 && isPLU) {
+      if (!window.confirm('Ai vânzări nesalvate. Dacă schimbi modul, lista se va pierde. Continui?')) return;
+    }
+    setDocType(type);
   }
 
   // ── Intrare handlers ──────────────────────────────────────────────────────
@@ -481,6 +533,41 @@ export default function Upload({ onNavigate }) {
       <div>
         <p className="page-title">Introdu vânzări</p>
 
+        {/* Draft restore dialog */}
+        {draftRestorePrompt && (
+          <div style={{ background: '#fef9c3', border: '1px solid #ca8a04', borderRadius: 10, padding: '12px 16px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <span style={{ flex: 1, fontSize: 13, color: '#92400e' }}>
+              💾 Am găsit un draft nesalvat. Vrei să restaurezi lista anterioară?
+            </span>
+            <button
+              className="btn btn-primary"
+              style={{ background: '#ca8a04', borderColor: '#ca8a04', padding: '6px 14px', fontSize: 12 }}
+              onClick={() => {
+                draftPendingRef.current = false;
+                try {
+                  const draft = JSON.parse(localStorage.getItem('sales_draft') || '{}');
+                  if (draft.items) setSalesItems(draft.items);
+                  if (draft.ref) setSalesRef(draft.ref);
+                } catch { /* ignore */ }
+                setDraftRestorePrompt(false);
+              }}
+            >
+              Da, restaurează
+            </button>
+            <button
+              className="btn btn-secondary"
+              style={{ padding: '6px 14px', fontSize: 12 }}
+              onClick={() => {
+                draftPendingRef.current = false;
+                localStorage.removeItem('sales_draft');
+                setDraftRestorePrompt(false);
+              }}
+            >
+              Nu, șterge
+            </button>
+          </div>
+        )}
+
         {/* Doc type toggle */}
         <div className="form-group">
           <div style={{ display: 'flex', gap: 8 }}>
@@ -492,7 +579,7 @@ export default function Upload({ onNavigate }) {
                 border: '1px solid var(--border2)',
                 color: 'var(--text2)',
               }}
-              onClick={() => setDocType('intrare')}
+              onClick={() => switchDocType('intrare')}
             >
               <div>📥 Factură</div>
               <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↑ intrare stoc</div>
@@ -512,7 +599,7 @@ export default function Upload({ onNavigate }) {
             <button
               className="btn"
               style={{ flex: 1, background: 'var(--bg3)', border: '1px solid var(--border2)', color: 'var(--text2)' }}
-              onClick={() => setDocType('ej')}
+              onClick={() => switchDocType('ej')}
             >
               <div>📊 Import EJ</div>
               <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 400 }}>↑↓ istoric casă</div>
