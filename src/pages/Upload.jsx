@@ -23,40 +23,6 @@ export default function Upload({ onNavigate }) {
   // Cleanup Tesseract worker when leaving the Upload page
   useEffect(() => () => { cleanupWorker(); }, []);
 
-  // ── Draft restore on mount ───────────────────────────────────────────────
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem('sales_draft');
-      if (!raw) return;
-      const draft = JSON.parse(raw);
-      if (draft?.items?.length > 0) {
-        draftPendingRef.current = true; // must be set before autosave effect runs
-        setDraftRestorePrompt(true);
-      }
-    } catch { /* ignore corrupt draft */ }
-  }, []);
-
-  // ── Autosave draft on every change ──────────────────────────────────────
-  useEffect(() => {
-    if (salesSaved) return; // don't overwrite cleared draft after success
-    if (draftPendingRef.current) return; // restore decision pending — don’t touch draft
-    if (salesItems.length === 0 && !salesRef.trim()) {
-      localStorage.removeItem('sales_draft');
-      return;
-    }
-    try {
-      localStorage.setItem('sales_draft', JSON.stringify({ items: salesItems, ref: salesRef }));
-    } catch { /* storage full — silently skip */ }
-  }, [salesItems, salesRef, salesSaved]);
-
-  // ── beforeunload protection ──────────────────────────────────────────────
-  useEffect(() => {
-    if (!isPLU || salesItems.length === 0) return;
-    const handler = (e) => { e.preventDefault(); e.returnValue = ''; };
-    window.addEventListener('beforeunload', handler);
-    return () => window.removeEventListener('beforeunload', handler);
-  }, [isPLU, salesItems.length]);
-
   // ── Intrare (OCR invoice) state ───────────────────────────────────────────
   const [sursa, setSursa] = useState('');
   const [facturaData, setFacturaData] = useState(null);
@@ -89,6 +55,42 @@ export default function Upload({ onNavigate }) {
   const allProducts = [...PRODUCTS, ...customProducts];
   const isPLU = docType === 'iesire';
   const isEJ  = docType === 'ej';
+
+  // ── Draft restore on mount ───────────────────────────────────────────────
+  // NOTE: all state vars and derived consts (isPLU etc.) are declared above —
+  // dep arrays are evaluated immediately so they must be in scope.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('sales_draft');
+      if (!raw) return;
+      const draft = JSON.parse(raw);
+      if (draft?.items?.length > 0) {
+        draftPendingRef.current = true; // must be set before autosave effect runs
+        setDraftRestorePrompt(true);
+      }
+    } catch { /* ignore corrupt draft */ }
+  }, []);
+
+  // ── Autosave draft on every change ──────────────────────────────────────
+  useEffect(() => {
+    if (salesSaved) return; // don't overwrite cleared draft after success
+    if (draftPendingRef.current) return; // restore decision pending — don’t touch draft
+    if (salesItems.length === 0 && !salesRef.trim()) {
+      localStorage.removeItem('sales_draft');
+      return;
+    }
+    try {
+      localStorage.setItem('sales_draft', JSON.stringify({ items: salesItems, ref: salesRef }));
+    } catch { /* storage full — silently skip */ }
+  }, [salesItems, salesRef, salesSaved]);
+
+  // ── beforeunload protection ──────────────────────────────────────────────
+  useEffect(() => {
+    if (!isPLU || salesItems.length === 0) return;
+    const handler = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isPLU, salesItems.length]);
 
   const filteredProducts = allProducts.filter(p =>
     salesSearch === '' || p.name.toLowerCase().includes(salesSearch.toLowerCase())
